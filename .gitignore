@@ -1,2 +1,3 @@
 .pio
 compile_commands.json
+node_modules

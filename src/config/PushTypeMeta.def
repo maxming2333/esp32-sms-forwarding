@@ -1,0 +1,26 @@
+// PushTypeMeta.def — Single source of truth for PushType enum values.
+// Consumed by:
+//   C++  → AppConfig.h uses X-macro to generate the PushType enum
+//   Python → script/pre_build.py parses this file and forwards raw data to
+//             the Vue frontend via web/esp32_config.json
+//
+// Format: PUSH_TYPE_DEF(KEY, VALUE)
+// Rules:
+//   - Do NOT add UI metadata here (labels / hints / field visibility belong
+//     in the Vue frontend: web/src/components/PushChannelEditor.vue)
+//   - Keep values contiguous and never reuse a value once assigned.
+
+PUSH_TYPE_DEF(PUSH_TYPE_NONE,        0)
+PUSH_TYPE_DEF(PUSH_TYPE_POST_JSON,   1)
+PUSH_TYPE_DEF(PUSH_TYPE_BARK,        2)
+PUSH_TYPE_DEF(PUSH_TYPE_GET,         3)
+PUSH_TYPE_DEF(PUSH_TYPE_DINGTALK,    4)
+PUSH_TYPE_DEF(PUSH_TYPE_PUSHPLUS,    5)
+PUSH_TYPE_DEF(PUSH_TYPE_SERVERCHAN,  6)
+PUSH_TYPE_DEF(PUSH_TYPE_CUSTOM,      7)
+PUSH_TYPE_DEF(PUSH_TYPE_FEISHU,      8)
+PUSH_TYPE_DEF(PUSH_TYPE_GOTIFY,      9)
+PUSH_TYPE_DEF(PUSH_TYPE_TELEGRAM,    10)
+PUSH_TYPE_DEF(PUSH_TYPE_WORK_WEIXIN, 11)
+PUSH_TYPE_DEF(PUSH_TYPE_SMS,         12)
+

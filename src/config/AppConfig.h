@@ -18,21 +18,14 @@
 #define MAX_PUSH_CHANNELS 5
 
 // ── Push type enumeration ────────────────────────────────────────────────────
-// NOTE: Values are exported to the Vue frontend via script/pre_build.py
+// Source of truth: src/config/PushTypeMeta.def  (X-macro format)
+// The same file is parsed by script/pre_build.py to forward raw enum data
+// to the Vue frontend.  UI metadata (labels/hints) lives in
+// web/src/components/PushChannelEditor.vue.
 enum PushType {
-  PUSH_TYPE_NONE        = 0,
-  PUSH_TYPE_POST_JSON   = 1,
-  PUSH_TYPE_BARK        = 2,
-  PUSH_TYPE_GET         = 3,
-  PUSH_TYPE_DINGTALK    = 4,
-  PUSH_TYPE_PUSHPLUS    = 5,
-  PUSH_TYPE_SERVERCHAN  = 6,
-  PUSH_TYPE_CUSTOM      = 7,
-  PUSH_TYPE_FEISHU      = 8,
-  PUSH_TYPE_GOTIFY      = 9,
-  PUSH_TYPE_TELEGRAM    = 10,
-  PUSH_TYPE_WORK_WEIXIN = 11,
-  PUSH_TYPE_SMS         = 12,
+#define PUSH_TYPE_DEF(key, val) key = val,
+#include "PushTypeMeta.def"
+#undef PUSH_TYPE_DEF
 };
 
 // ── Structs ──────────────────────────────────────────────────────────────────

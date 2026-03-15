@@ -80,7 +80,104 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const esp32 = window.__ESP32_DATA__ || {}
-const pushTypes = esp32.PUSH_TYPES || []
+
+// ── UI metadata for each push type ───────────────────────────────────────────
+// Keyed by the C++ enum key string from PushTypeMeta.def.
+// esp32_config.json only carries raw {key, value} pairs — all display /
+// field-visibility logic lives here in the frontend.
+const PUSH_TYPE_UI = {
+  PUSH_TYPE_NONE: {
+    label: '禁用',
+    hint: '',
+    showUrl: false, showKey1: false, showKey2: false, showCustomBody: false,
+  },
+  PUSH_TYPE_POST_JSON: {
+    label: 'POST JSON（通用格式）',
+    hint: 'POST JSON格式：{"sender":"发送者号码","message":"短信内容","timestamp":"时间","device":"本机号码"}',
+    showUrl: true,  urlLabel: '推送URL/Webhook',
+    showKey1: false, showKey2: false, showCustomBody: false,
+  },
+  PUSH_TYPE_BARK: {
+    label: 'Bark（iOS推送）',
+    hint: 'Bark格式：POST {"title":"发送者号码","body":"短信内容"}',
+    showUrl: true,  urlLabel: 'Bark推送URL',
+    showKey1: false, showKey2: false, showCustomBody: false,
+  },
+  PUSH_TYPE_GET: {
+    label: 'GET请求（参数在URL中）',
+    hint: 'GET请求格式：URL?sender=xxx&message=xxx&timestamp=xxx&device=xxx',
+    showUrl: true,  urlLabel: 'GET请求URL',
+    showKey1: false, showKey2: false, showCustomBody: false,
+  },
+  PUSH_TYPE_DINGTALK: {
+    label: '钉钉机器人',
+    hint: '填写Webhook地址，如需加签请填Secret（key1）',
+    showUrl: true,  urlLabel: 'Webhook地址',
+    showKey1: true, key1Label: 'Secret（加签密钥，可选）', key1Placeholder: 'SEC...',
+    showKey2: false, showCustomBody: false,
+  },
+  PUSH_TYPE_PUSHPLUS: {
+    label: 'PushPlus',
+    hint: '填写Token，URL留空使用默认 http://www.pushplus.plus/send',
+    showUrl: true,  urlLabel: '推送URL（可留空）',
+    showKey1: true, key1Label: 'Token',
+    showKey2: true, key2Label: '群组编码（可选）',
+    showCustomBody: false,
+  },
+  PUSH_TYPE_SERVERCHAN: {
+    label: 'Server酱',
+    hint: '填写SendKey（SCKEY）',
+    showUrl: false,
+    showKey1: true, key1Label: 'SendKey',
+    showKey2: false, showCustomBody: false,
+  },
+  PUSH_TYPE_CUSTOM: {
+    label: '自定义请求体',
+    hint: '自定义POST请求，Body模板支持 {sender} {message} {timestamp} {device} 占位符',
+    showUrl: true,  urlLabel: '推送URL/Webhook',
+    showKey1: false, showKey2: false, showCustomBody: true,
+  },
+  PUSH_TYPE_FEISHU: {
+    label: '飞书机器人',
+    hint: '填写Webhook地址，如需加签请填Secret（key1）',
+    showUrl: true,  urlLabel: 'Webhook地址',
+    showKey1: true, key1Label: 'Secret（加签密钥，可选）', key1Placeholder: '',
+    showKey2: false, showCustomBody: false,
+  },
+  PUSH_TYPE_GOTIFY: {
+    label: 'Gotify',
+    hint: '填写Gotify服务器地址及应用Token',
+    showUrl: true,  urlLabel: 'Gotify服务器URL',
+    showKey1: true, key1Label: 'Application Token',
+    showKey2: false, showCustomBody: false,
+  },
+  PUSH_TYPE_TELEGRAM: {
+    label: 'Telegram Bot',
+    hint: '填写Bot Token和Chat ID',
+    showUrl: false,
+    showKey1: true, key1Label: 'Bot Token',
+    showKey2: true, key2Label: 'Chat ID',
+    showCustomBody: false,
+  },
+  PUSH_TYPE_WORK_WEIXIN: {
+    label: '企业微信机器人',
+    hint: '填写企业微信机器人Webhook地址',
+    showUrl: true,  urlLabel: 'Webhook地址',
+    showKey1: false, showKey2: false, showCustomBody: false,
+  },
+  PUSH_TYPE_SMS: {
+    label: '短信转发（发送SMS）',
+    hint: '填写目标手机号，将短信转发给指定号码',
+    showUrl: false,
+    showKey1: true, key1Label: '目标手机号',
+    showKey2: false, showCustomBody: false,
+  },
+}
+
+// Merge raw enum data from C++ with local UI metadata
+const pushTypes = (esp32.PUSH_TYPES || [])
+  .filter(pt => pt.key !== 'PUSH_TYPE_NONE')   // hide "none" from selector
+  .map(pt => ({ ...pt, ...(PUSH_TYPE_UI[pt.key] || { label: pt.key }) }))
 
 // Local copy so edits are reactive
 const local = ref({ ...props.modelValue })
