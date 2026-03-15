@@ -485,8 +485,7 @@ void handlePing() {
 }
 
 // ── POST /api/test_push ───────────────────────────────────────────────────────
-void handleTestPush() {
-  if (!checkAuth()) return;
+void handleTestPush() {  if (!checkAuth()) return;
   PushChannel tc;
   tc.enabled    = true;
   tc.type       = (PushType)server.arg("type").toInt();
@@ -518,3 +517,55 @@ void handleTestPush() {
     "{\"success\":" + String(ok?"true":"false") + ",\"message\":\"" + resp + "\"}");
 }
 
+// ── GET /api/sysinfo ──────────────────────────────────────────────────────────
+void handleGetSysInfo() {
+  if (!checkAuth()) return;
+
+  uint32_t freeHeap   = ESP.getFreeHeap();
+  uint32_t totalHeap  = ESP.getHeapSize();
+  uint32_t usedHeap   = totalHeap - freeHeap;
+
+  uint32_t sketchSize = ESP.getSketchSize();
+  uint32_t freeSketch = ESP.getFreeSketchSpace();
+  uint32_t totalFlash = sketchSize + freeSketch;
+
+  uint32_t cpuFreq = ESP.getCpuFreqMHz();
+
+  // Unique chip identifier derived from eFuse MAC (unique per chip)
+  uint64_t mac = ESP.getEfuseMac();
+  char chipId[20];
+  snprintf(chipId, sizeof(chipId), "%04X%08X",
+           (uint32_t)(mac >> 32), (uint32_t)(mac & 0xFFFFFFFFUL));
+
+  // Uptime
+  unsigned long uptimeSec = millis() / 1000;
+  unsigned long days  = uptimeSec / 86400;
+  unsigned long hours = (uptimeSec % 86400) / 3600;
+  unsigned long mins  = (uptimeSec % 3600)  / 60;
+  unsigned long secs  = uptimeSec % 60;
+  char uptime[32];
+  snprintf(uptime, sizeof(uptime), "%lud %02lu:%02lu:%02lu", days, hours, mins, secs);
+
+  String json = "{";
+  json += "\"freeHeap\":"     + String(freeHeap)              + ",";
+  json += "\"totalHeap\":"    + String(totalHeap)             + ",";
+  json += "\"usedHeap\":"     + String(usedHeap)              + ",";
+  json += "\"sketchSize\":"   + String(sketchSize)            + ",";
+  json += "\"freeSketch\":"   + String(freeSketch)            + ",";
+  json += "\"totalFlash\":"   + String(totalFlash)            + ",";
+  json += "\"cpuFreqMHz\":"   + String(cpuFreq)               + ",";
+  json += "\"chipModel\":\""  + jsonEscape(ESP.getChipModel()) + "\",";
+  json += "\"chipRevision\":" + String(ESP.getChipRevision())  + ",";
+  json += "\"chipId\":\""     + String(chipId)                 + "\",";
+  json += "\"uptime\":\""     + String(uptime)                 + "\"";
+  json += "}";
+  sendClose(200, "application/json", json);
+}
+
+// ── POST /api/reboot ──────────────────────────────────────────────────────────
+void handleReboot() {
+  if (!checkAuth()) return;
+  sendClose(200, "application/json", "{\"success\":true,\"message\":\"设备即将重启...\"}");
+  delay(500);
+  ESP.restart();
+}

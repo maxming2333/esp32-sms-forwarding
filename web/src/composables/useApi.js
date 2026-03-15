@@ -38,6 +38,8 @@ export function useApi() {
     getStatus:  ()         => request('GET',  '/api/status'),
     getConfig:  ()         => request('GET',  '/api/config'),
     saveConfig: (data)     => formPost('/api/config', data),
+    getSysInfo: ()         => request('GET',  '/api/sysinfo'),
+    reboot:     ()         => request('POST', '/api/reboot'),
     sendSms:    (data)     => formPost('/api/sendsms', data),
     query:      (type)     => request('GET',  `/api/query?type=${type}`),
     flight:     (action)   => request('GET',  `/api/flight?action=${action}`),

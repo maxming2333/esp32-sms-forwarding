@@ -16,6 +16,8 @@ Registered in platformio.ini:
 import re
 import json
 import os
+import subprocess
+from datetime import datetime
 
 Import("env")  # noqa: F821 — PlatformIO injects this
 
@@ -68,15 +70,33 @@ def parse_push_type_def(path):
     return entries
 
 
+def get_git_commit(cwd):
+    """Return short git commit hash, or 'unknown' if git is unavailable."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=cwd, stderr=subprocess.DEVNULL
+        ).decode().strip()
+    except Exception:
+        return "unknown"
+
+
 def main():
     int_defs, str_defs = parse_header_defines(HEADER)
     push_types = parse_push_type_def(DEF_FILE)
+
+    git_commit = get_git_commit(PROJECT_DIR)
+    build_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     out = {
         "MAX_PUSH_CHANNELS": int_defs.get("MAX_PUSH_CHANNELS", 0),
         "DEFAULT_WEB_USER":  str_defs.get("DEFAULT_WEB_USER",  ""),
         "DEFAULT_WEB_PASS":  str_defs.get("DEFAULT_WEB_PASS",  ""),
         "PUSH_TYPES":        push_types,
+        "GIT_COMMIT":        git_commit,
+        "BUILD_TIME":        build_time,
+        "REPO_URL":          "https://github.com/maxming2333/sms_forwarding",
+        "AUTHOR":            "maxming2333",
     }
 
     os.makedirs(os.path.dirname(OUT_JSON), exist_ok=True)

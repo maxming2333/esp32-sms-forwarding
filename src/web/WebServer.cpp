@@ -14,6 +14,8 @@ void webServerInit() {
   server.on("/api/status",    HTTP_GET,  handleGetStatus);
   server.on("/api/config",    HTTP_GET,  handleGetConfig);
   server.on("/api/config",    HTTP_POST, handlePostConfig);
+  server.on("/api/sysinfo",   HTTP_GET,  handleGetSysInfo);
+  server.on("/api/reboot",    HTTP_POST, handleReboot);
   server.on("/api/sendsms",   HTTP_POST, handleSendSms);
   server.on("/api/query",     HTTP_GET,  handleQuery);
   server.on("/api/flight",    HTTP_GET,  handleFlightMode);

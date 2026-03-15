@@ -349,5 +349,40 @@ textarea {
   }
 }
 
+// ── Usage bar (MCU info) ──────────────────────────────────────────────────────
+.usage-bar-wrap {
+  background: #e0e0e0;
+  border-radius: 4px;
+  height: 8px;
+  overflow: hidden;
+  margin-bottom: 4px;
 
+  .usage-bar {
+    height: 100%;
+    border-radius: 4px;
+    transition: width .4s ease, background .4s ease;
+    min-width: 2px;
+  }
+}
 
+.usage-label {
+  font-size: 12px;
+  color: $text-muted;
+}
+
+// ── Footer ────────────────────────────────────────────────────────────────────
+.app-footer {
+  background: #fff;
+  border-top: 1px solid $border;
+  padding: 12px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: $text-muted;
+
+  a {
+    color: $primary;
+    text-decoration: none;
+    font-weight: 500;
+    &:hover { text-decoration: underline; }
+  }
+}
