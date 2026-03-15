@@ -113,6 +113,7 @@ void loop() {
 
   smsReceiverTick();
   checkScheduledReboot();
+  checkTrafficKeep();
 }
 
 // ── END OF FILE — remaining content below is the old monolithic code ─────────

@@ -61,6 +61,33 @@
           建议设置在深夜（如 03:00），重启时将同时复位 ESP32 和 4G 模组。
         </p>
       </div>
+
+      <div style="border-top:1px solid #eee;margin-top:16px;padding-top:16px">
+        <div class="form-group" style="display:flex;align-items:center;gap:10px">
+          <input type="checkbox" id="trafficKeepEnabled" v-model="form.trafficKeepEnabled"
+                 style="width:auto;margin:0">
+          <label for="trafficKeepEnabled" style="margin:0;font-weight:normal;cursor:pointer">
+            启用定时消耗流量（保持连接活跃）
+          </label>
+        </div>
+        <div class="form-group">
+          <label>消耗间隔（小时）</label>
+          <input type="number" v-model.number="form.trafficKeepIntervalHours"
+                 min="1" max="168" placeholder="1">
+          <p style="font-size:12px;color:#888;margin:4px 0 0">
+            每隔指定小时数通过模组向 8.8.8.8 发送 Ping 数据包。
+          </p>
+        </div>
+        <div class="form-group">
+          <label>单次消耗流量（KB）</label>
+          <input type="number" v-model.number="form.trafficKeepSizeKb"
+                 min="1" max="300" placeholder="10">
+          <p style="font-size:12px;color:#888;margin:4px 0 0">
+            每次约消耗指定大小的流量（实际可能略多），建议 1–50 KB。
+            较大值会短暂占用模组（每 30 包约需 30 秒）。
+          </p>
+        </div>
+      </div>
     </div>
 
     <!-- Email -->
@@ -161,6 +188,9 @@ const form = reactive({
   numberBlackList: '',
   autoRebootEnabled: false,
   autoRebootTime: '03:00',
+  trafficKeepEnabled: false,
+  trafficKeepIntervalHours: 1,
+  trafficKeepSizeKb: 10,
   pushChannels: Array.from({ length: MAX_CH }, (_, i) => emptyChannel(i))
 })
 
@@ -179,6 +209,9 @@ onMounted(async () => {
         numberBlackList: cfg.numberBlackList || '',
         autoRebootEnabled: cfg.autoRebootEnabled || false,
         autoRebootTime: cfg.autoRebootTime || '03:00',
+        trafficKeepEnabled: cfg.trafficKeepEnabled || false,
+        trafficKeepIntervalHours: cfg.trafficKeepIntervalHours || 1,
+        trafficKeepSizeKb: cfg.trafficKeepSizeKb || 10,
       })
     if (cfg.pushChannels?.length) {
       form.pushChannels = cfg.pushChannels.map((c, i) => ({
@@ -204,6 +237,9 @@ async function save() {
       numberBlackList: form.numberBlackList,
       autoRebootEnabled: form.autoRebootEnabled ? 'true' : 'false',
       autoRebootTime: form.autoRebootTime,
+      trafficKeepEnabled: form.trafficKeepEnabled ? 'true' : 'false',
+      trafficKeepIntervalHours: form.trafficKeepIntervalHours,
+      trafficKeepSizeKb: form.trafficKeepSizeKb,
     }
     form.pushChannels.forEach((ch, i) => {
       data[`push${i}en`]    = ch.enabled ? 'on' : ''

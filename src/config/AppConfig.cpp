@@ -22,6 +22,9 @@ void saveConfig() {
   prefs.putString("numBlkList", config.numberBlackList);
   prefs.putBool  ("rebootEn",   config.autoRebootEnabled);
   prefs.putString("rebootTime", config.autoRebootTime);
+  prefs.putBool  ("trafEn",  config.trafficKeepEnabled);
+  prefs.putInt   ("trafHrs", config.trafficKeepIntervalHours);
+  prefs.putInt   ("trafKb",  config.trafficKeepSizeKb);
 
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     String p = "push" + String(i);
@@ -54,6 +57,9 @@ void loadConfig() {
   config.numberBlackList = prefs.getString("numBlkList", "");
   config.autoRebootEnabled = prefs.getBool  ("rebootEn",   false);
   config.autoRebootTime    = prefs.getString("rebootTime", "03:00");
+  config.trafficKeepEnabled       = prefs.getBool("trafEn",  false);
+  config.trafficKeepIntervalHours = prefs.getInt ("trafHrs", 1);
+  config.trafficKeepSizeKb        = prefs.getInt ("trafKb",  10);
 
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     String p = "push" + String(i);

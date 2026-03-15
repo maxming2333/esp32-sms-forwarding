@@ -75,6 +75,9 @@ void handleGetConfig() {
   json += "\"numberBlackList\":\"" + jsonEscape(config.numberBlackList) + "\",";
   json += "\"autoRebootEnabled\":" + String(config.autoRebootEnabled ? "true" : "false") + ",";
   json += "\"autoRebootTime\":\""  + jsonEscape(config.autoRebootTime) + "\",";
+  json += "\"trafficKeepEnabled\":"        + String(config.trafficKeepEnabled ? "true" : "false") + ",";
+  json += "\"trafficKeepIntervalHours\":"  + String(config.trafficKeepIntervalHours) + ",";
+  json += "\"trafficKeepSizeKb\":"         + String(config.trafficKeepSizeKb) + ",";
   json += "\"pushChannels\":[";
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     if (i) json += ",";
@@ -118,6 +121,14 @@ void handlePostConfig() {
   config.autoRebootEnabled = (rebootEn == "true" || rebootEn == "on" || rebootEn == "1");
   String rebootTime = arg("autoRebootTime");
   config.autoRebootTime = rebootTime.length() > 0 ? rebootTime : "03:00";
+
+  // Traffic keep-alive
+  String trafEn = arg("trafficKeepEnabled");
+  config.trafficKeepEnabled = (trafEn == "true" || trafEn == "on" || trafEn == "1");
+  int trafHrs = arg("trafficKeepIntervalHours").toInt();
+  config.trafficKeepIntervalHours = (trafHrs > 0) ? trafHrs : 1;
+  int trafKb = arg("trafficKeepSizeKb").toInt();
+  config.trafficKeepSizeKb = (trafKb > 0) ? trafKb : 10;
 
   String oldSSID = config.wifiSSID, oldPass = config.wifiPass;
   config.wifiSSID = arg("wifiSSID");

@@ -56,6 +56,10 @@ struct Config {
   // ── Scheduled reboot ───────────────────────────────────────────────────────
   bool        autoRebootEnabled;  // enable daily scheduled reboot
   String      autoRebootTime;     // "HH:MM" in local time (UTC+8)
+  // ── Traffic keep-alive ─────────────────────────────────────────────────────
+  bool        trafficKeepEnabled;       // enable periodic traffic consumption
+  int         trafficKeepIntervalHours; // interval between sessions (hours)
+  int         trafficKeepSizeKb;        // target data per session (KB)
 };
 
 // ── Global instances (defined in AppConfig.cpp) ──────────────────────────────
