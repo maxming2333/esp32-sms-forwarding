@@ -37,7 +37,9 @@ enum PushType {
   PUSH_TYPE_CUSTOM = 7,    // 自定义模板
   PUSH_TYPE_FEISHU = 8,    // 飞书机器人
   PUSH_TYPE_GOTIFY = 9,    // Gotify
-  PUSH_TYPE_TELEGRAM = 10  // Telegram Bot
+  PUSH_TYPE_TELEGRAM = 10,  // Telegram Bot
+  PUSH_TYPE_WORK_WEIXIN = 11,  // 企业微信机器人
+  PUSH_TYPE_SMS = 12,  // 短信转发
 };
 
 // 最大推送通道数
@@ -87,6 +89,10 @@ bool timeSynced = false;   // NTP时间是否已同步
 unsigned long lastPrintTime = 0;  // 上次打印IP的时间
 String devicePhoneNumber = "未知号码"; // 本机号码（SIM卡号）
 
+// SIM卡热插拔状态
+bool simPresent = false;     // SIM卡是否存在
+bool simInitialized = false; // SIM卡相关功能是否已初始化完成
+
 #define SERIAL_BUFFER_SIZE 500
 #define MAX_PDU_LENGTH 300
 char serialBuf[SERIAL_BUFFER_SIZE];
@@ -123,6 +129,8 @@ bool sendSMS(const char* phoneNumber, const char* message);
 String jsonEscape(const String& str);
 bool sendATandWaitOK(const char* cmd, unsigned long timeout);
 int sendToChannel(const PushChannel& channel, const char* sender, const char* message, const char* timestamp, const char* devicePhone);
+bool checkSIMPresent();
+bool initSIMDependent();
 
 // 保存配置到NVS
 void saveConfig() {
@@ -206,6 +214,8 @@ bool isPushChannelValid(const PushChannel& ch) {
     case PUSH_TYPE_GET:
     case PUSH_TYPE_DINGTALK:
     case PUSH_TYPE_FEISHU:
+    case PUSH_TYPE_WORK_WEIXIN:
+    case PUSH_TYPE_SMS:
     case PUSH_TYPE_CUSTOM:
       return ch.url.length() > 0;
     case PUSH_TYPE_PUSHPLUS:
@@ -314,6 +324,19 @@ const char* htmlPage = R"rawliteral(
       </div>
 
       <div class="section">
+        <div class="section-title">📡 WiFi 设置</div>
+        <div class="hint" style="margin-bottom:10px;">修改WiFi配置后保存将自动重启设备并连接新WiFi。若连接失败将自动开启热点 <b>SMS-Forwarder-AP</b>。</div>
+        <div class="form-group">
+          <label>WiFi 名称 (SSID)</label>
+          <input type="text" name="wifiSSID" value="%WIFI_SSID%" placeholder="请输入WiFi名称">
+        </div>
+        <div class="form-group">
+          <label>WiFi 密码</label>
+          <input type="password" name="wifiPass" value="%WIFI_PASS%" placeholder="请输入WiFi密码">
+        </div>
+      </div>
+
+      <div class="section">
         <div class="section-title">📧 邮件通知设置</div>
         <div class="form-group">
           <label>SMTP服务器</label>
@@ -342,19 +365,6 @@ const char* htmlPage = R"rawliteral(
         <div class="hint" style="margin-bottom:15px;">可同时启用多个推送通道，每个通道独立配置。支持POST JSON、Bark、GET、钉钉、PushPlus、Server酱等多种方式。</div>
 
         %PUSH_CHANNELS%
-      </div>
-
-      <div class="section">
-        <div class="section-title">📡 WiFi 设置</div>
-        <div class="hint" style="margin-bottom:10px;">修改WiFi配置后保存将自动重启设备并连接新WiFi。若连接失败将自动开启热点 <b>SMS-Forwarder-AP</b>。</div>
-        <div class="form-group">
-          <label>WiFi 名称 (SSID)</label>
-          <input type="text" name="wifiSSID" value="%WIFI_SSID%" placeholder="请输入WiFi名称">
-        </div>
-        <div class="form-group">
-          <label>WiFi 密码</label>
-          <input type="password" name="wifiPass" value="%WIFI_PASS%" placeholder="请输入WiFi密码">
-        </div>
       </div>
 
       <div class="section">
@@ -449,6 +459,10 @@ const char* htmlPage = R"rawliteral(
         document.getElementById('key1' + idx).placeholder = '123456789';
         document.getElementById('key2label' + idx).innerText = 'Bot Token';
         document.getElementById('key2' + idx).placeholder = '12345678:ABC...';
+      } else if (type == 11) {
+        hint.innerHTML = '<b>企业微信机器人：</b><br>填写Webhook地址';
+      } else if (type == 12) {
+        hint.innerHTML = '<b>短信转发：</b><br>填写目标手机号，国际号码请使用 “+国家码” 前缀，如 +8612345678900';
       }
     }
     document.addEventListener('DOMContentLoaded', function() {
@@ -560,7 +574,7 @@ const char* htmlToolsPage = R"rawliteral(
         <div class="section-title">📤 发送短信</div>
         <div class="form-group">
           <label>目标号码</label>
-          <input type="text" name="phone" placeholder="13800138000" required>
+          <input type="text" name="phone" placeholder="填写目标手机号，国际号码请使用 “+国家码” 前缀，如 +8612345678900" required>
         </div>
         <div class="form-group">
           <label>短信内容</label>
@@ -1078,6 +1092,8 @@ void handleRoot() {
     channelsHtml += "<option value=\"8\"" + String(config.pushChannels[i].type == PUSH_TYPE_FEISHU ? " selected" : "") + ">飞书机器人</option>";
     channelsHtml += "<option value=\"9\"" + String(config.pushChannels[i].type == PUSH_TYPE_GOTIFY ? " selected" : "") + ">Gotify</option>";
     channelsHtml += "<option value=\"10\"" + String(config.pushChannels[i].type == PUSH_TYPE_TELEGRAM ? " selected" : "") + ">Telegram Bot</option>";
+    channelsHtml += "<option value=\"11\"" + String(config.pushChannels[i].type == PUSH_TYPE_WORK_WEIXIN ? " selected" : "") + ">企业微信机器人</option>";
+    channelsHtml += "<option value=\"12\"" + String(config.pushChannels[i].type == PUSH_TYPE_SMS ? " selected" : "") + ">短信转发</option>";
     channelsHtml += "</select>";
     channelsHtml += "<div class=\"push-type-hint\" id=\"hint" + idx + "\"></div>";
     channelsHtml += "</div>";
@@ -1114,7 +1130,7 @@ void handleRoot() {
     channelsHtml += "<button type=\"button\" class=\"btn-test\" id=\"testBtn" + idx + "\" onclick=\"testChannel(" + idx + ")\">🧪 测试</button>";
     channelsHtml += "<div class=\"test-result\" id=\"testResult" + idx + "\"></div>";
 
-    channelsHtml += "</div></div>";
+    channelsHtml += "</div>";
   }
   html.replace("%PUSH_CHANNELS%", channelsHtml);
 
@@ -2464,15 +2480,30 @@ int sendToChannel(const PushChannel& channel, const char* sender, const char* me
                   channel.type == PUSH_TYPE_CUSTOM);
   if (needUrl && channel.url.length() == 0) return -1;
 
-  HTTPClient http;
   String channelName = channel.name.length() > 0 ? channel.name : ("通道" + String(channel.type));
   Serial.println("发送到推送通道: " + channelName);
 
-  int httpCode = 0;
   String senderEscaped = jsonEscape(String(sender));
   String messageEscaped = jsonEscape(String(message));
   String timestampEscaped = jsonEscape(formatTimestamp(timestamp));
   String devicePhoneEscaped = jsonEscape(String(devicePhone ? devicePhone : ""));
+
+  if (channel.type == PUSH_TYPE_SMS) {
+    String phone = channel.url;
+    String content = "📱短信通知\\n发送者: " + senderEscaped + "\\n接收卡号: " + devicePhoneEscaped + "\\n内容: " + messageEscaped + "\\n时间: " + timestampEscaped;
+
+    phone.trim();
+    content.trim();
+
+    String resultMsg = "";
+    bool success = sendSMS(phone.c_str(), content.c_str());
+    resultMsg = success ? "短信发送成功！" : "短信发送失败，请检查模组状态";
+    Serial.printf("[%s] 响应码: %s\n", channelName.c_str(), resultMsg.c_str());
+    return success ? 0 : -1;
+  }
+
+  HTTPClient http;
+  int httpCode = 0;
 
   switch (channel.type) {
     case PUSH_TYPE_POST_JSON: {
@@ -2697,6 +2728,24 @@ int sendToChannel(const PushChannel& channel, const char* sender, const char* me
       break;
     }
 
+    case PUSH_TYPE_WORK_WEIXIN: {
+      // 企业微信机器人
+      String webhookUrl = channel.url;
+      String jsonData = "{";
+
+      // 企业微信消息体
+      jsonData += "\"msgtype\":\"text\",";
+      jsonData += "\"text\":{\"content\":\"";
+      jsonData += "📱短信通知\\n发送者: " + senderEscaped + "\\n接收卡号: " + devicePhoneEscaped + "\\n内容: " + messageEscaped + "\\n时间: " + timestampEscaped;
+      jsonData += "\"}}";
+
+      http.begin(webhookUrl);
+      http.addHeader("Content-Type", "application/json");
+      Serial.println("企业微信: " + jsonData);
+      httpCode = http.POST(jsonData);
+      break;
+    }
+
     default:
       Serial.println("未知推送类型");
       return -1;
@@ -2831,6 +2880,47 @@ void checkSerial1URC() {
     if (line.startsWith("+CMT:")) {
       Serial.println("检测到+CMT，等待PDU数据...");
       state = WAIT_PDU;
+    }
+    // ========== SIM卡热插拔URC处理 ==========
+    // ML307C 在SIM卡就绪时上报 "+CPIN: READY"，拔出时可能上报 "+CPIN: NOT READY" 或 "^SIMST:0"
+    else if (line.indexOf("+CPIN:") >= 0) {
+      if (line.indexOf("READY") >= 0 && line.indexOf("NOT") < 0) {
+        // SIM就绪通知：如果当前未初始化，立即触发初始化（无需等待轮询周期）
+        if (!simInitialized) {
+          Serial.println("🔔 URC检测到SIM就绪，触发初始化...");
+          simPresent = true;
+          devicePhoneNumber = "未知号码";
+          delay(500);
+          initSIMDependent();
+        }
+      } else {
+        // SIM未就绪/拔出
+        if (simPresent) {
+          Serial.println("⚠️ URC检测到SIM不可用，重置SIM状态");
+          simPresent = false;
+          simInitialized = false;
+          devicePhoneNumber = "未知号码";
+        }
+      }
+    }
+    // 部分移远/ML30x模组使用 ^SIMST URC（0=移除，1=插入就绪）
+    else if (line.startsWith("^SIMST:") || line.startsWith("+SIMCARD:")) {
+      if (line.indexOf(":1") >= 0 || line.indexOf(": 1") >= 0) {
+        if (!simInitialized) {
+          Serial.println("🔔 URC检测到SIM插入(^SIMST/+SIMCARD)，触发初始化...");
+          simPresent = true;
+          devicePhoneNumber = "未知号码";
+          delay(500);
+          initSIMDependent();
+        }
+      } else if (line.indexOf(":0") >= 0 || line.indexOf(": 0") >= 0) {
+        if (simPresent) {
+          Serial.println("⚠️ URC检测到SIM拔出(^SIMST/+SIMCARD)，重置SIM状态");
+          simPresent = false;
+          simInitialized = false;
+          devicePhoneNumber = "未知号码";
+        }
+      }
     }
   } else if (state == WAIT_PDU) {
     // 跳过空行
@@ -2969,6 +3059,120 @@ bool waitCEREG() {
   return false;
 }
 
+// ========== SIM卡状态检测 ==========
+// 使用 AT+CPIN? 查询SIM卡是否就绪
+// 返回 true: SIM卡存在且就绪; false: 未插入或未就绪
+bool checkSIMPresent() {
+  while (Serial1.available()) Serial1.read();  // 清空缓冲区
+  Serial1.println("AT+CPIN?");
+  unsigned long start = millis();
+  String resp = "";
+  while (millis() - start < 3000) {
+    while (Serial1.available()) {
+      char c = Serial1.read();
+      resp += c;
+    }
+    if (resp.indexOf("+CPIN:") >= 0 || resp.indexOf("ERROR") >= 0) {
+      delay(50);
+      while (Serial1.available()) resp += (char)Serial1.read();
+      break;
+    }
+  }
+  Serial.println("AT+CPIN? 响应: " + resp);
+  // +CPIN: READY 表示SIM卡就绪
+  if (resp.indexOf("READY") >= 0) return true;
+  // +CME ERROR: 10 / +CME ERROR: 11 表示无SIM卡或SIM故障
+  return false;
+}
+
+// ========== SIM卡相关初始化 ==========
+// 将所有依赖SIM卡的初始化逻辑集中在此函数中
+// 返回 true 表示初始化成功，false 表示中途失败（如SIM被拔出）
+bool initSIMDependent() {
+  Serial.println("========== 开始SIM卡初始化 ==========");
+
+  // 禁用数据连接，防止流量消耗
+  int retry = 0;
+  while (!sendATandWaitOK("AT+CGACT=0,1", 5000)) {
+    Serial.println("设置CGACT失败，重试...");
+    blink_short();
+    if (++retry >= 10) {
+      Serial.println("⚠️ AT+CGACT=0,1 多次失败，跳过（可能无SIM）");
+      // 不强制中断，继续尝试后续步骤
+      break;
+    }
+  }
+  if (retry < 10) Serial.println("已禁用数据连接(AT+CGACT=0,1)");
+
+  // 设置短信自动上报
+  retry = 0;
+  while (!sendATandWaitOK("AT+CNMI=2,2,0,0,0", 1000)) {
+    Serial.println("设置CNMI失败，重试...");
+    blink_short();
+    if (++retry >= 15) {
+      Serial.println("❌ AT+CNMI 设置失败，SIM卡初始化中止");
+      return false;
+    }
+  }
+  Serial.println("CNMI参数设置完成");
+
+  // 配置PDU模式
+  retry = 0;
+  while (!sendATandWaitOK("AT+CMGF=0", 1000)) {
+    Serial.println("设置PDU模式失败，重试...");
+    blink_short();
+    if (++retry >= 15) {
+      Serial.println("❌ AT+CMGF=0 设置失败，SIM卡初始化中止");
+      return false;
+    }
+  }
+  Serial.println("PDU模式设置完成");
+
+  // 等待网络注册（LTE/4G），最多等待约60秒
+  retry = 0;
+  while (!waitCEREG()) {
+    Serial.println("等待网络注册...");
+    blink_short();
+    if (++retry >= 40) {
+      Serial.println("❌ 网络注册超时，SIM卡初始化中止");
+      return false;
+    }
+    // 每次等待前重新检查SIM是否仍然在位
+    if (!checkSIMPresent()) {
+      Serial.println("⚠️ 等待网络注册期间SIM卡被拔出，中止初始化");
+      return false;
+    }
+  }
+  Serial.println("网络已注册");
+
+  // 查询本机号码（SIM卡号）
+  {
+    String cnumResp = sendATCommand("AT+CNUM", 2000);
+    if (cnumResp.indexOf("+CNUM:") >= 0) {
+      int idx = cnumResp.indexOf(",\"");
+      if (idx >= 0) {
+        int endIdx = cnumResp.indexOf("\"", idx + 2);
+        if (endIdx > idx) {
+          devicePhoneNumber = cnumResp.substring(idx + 2, endIdx);
+        }
+      }
+    }
+    Serial.println("本机号码: " + devicePhoneNumber);
+  }
+
+  simInitialized = true;
+  Serial.println("========== SIM卡初始化完成 ==========");
+
+  // 如果配置有效，发送启动/插卡通知
+  if (configValid) {
+    String subject = "短信转发器：SIM卡已就绪";
+    String body = "SIM卡初始化成功\n本机号码: " + devicePhoneNumber + "\n设备地址: " + getDeviceUrl();
+    sendEmailNotification(subject.c_str(), body.c_str());
+  }
+
+  return true;
+}
+
 void setup() {
   //  指示灯
   pinMode(LED_BUILTIN, OUTPUT);
@@ -3002,34 +3206,16 @@ void setup() {
   }
   Serial.println("模组AT响应正常");
 
-  //先设置CGACT，禁用数据连接
-  while (!sendATandWaitOK("AT+CGACT=0,1", 5000)) {
-    Serial.println("设置CGACT失败，重试...");
-    blink_short();
+  // 检查SIM卡是否插入，决定是否执行SIM相关初始化
+  simPresent = checkSIMPresent();
+  if (simPresent) {
+    Serial.println("✅ 检测到SIM卡，开始SIM相关初始化...");
+    initSIMDependent();
+  } else {
+    Serial.println("⚠️ 未检测到SIM卡，跳过SIM初始化，系统将继续启动");
+    Serial.println("   SIM卡插入后将自动完成初始化");
   }
-  Serial.println("已禁用数据连接(AT+CGACT=0,1)，防止流量消耗");
-
-  //设置短信自动上报
-  while (!sendATandWaitOK("AT+CNMI=2,2,0,0,0", 1000)) {
-    Serial.println("设置CNMI失败，重试...");
-    blink_short();
-  }
-  Serial.println("CNMI参数设置完成");
-
-  //配置PDU模式
-  while (!sendATandWaitOK("AT+CMGF=0", 1000)) {
-    Serial.println("设置PDU模式失败，重试...");
-    blink_short();
-  }
-  Serial.println("PDU模式设置完成");
-
-  //等待网络注册（LTE/4G）
-  while (!waitCEREG()) {
-    Serial.println("等待网络注册...");
-    blink_short();
-  }
-  Serial.println("网络已注册");
-  // ========== 模组初始化完成 ==========
+  // ========== 模组初始化完成（SIM部分已异步化）==========
 
   // 连接WiFi（优先使用NVS中保存的SSID，支持隐藏SSID，失败时开AP热点）
   WiFi.mode(WIFI_STA);
@@ -3083,21 +3269,6 @@ void setup() {
     Serial.println("NTP时间同步失败，将使用设备时间");
   }
 
-  // 查询本机号码（SIM卡号）
-  {
-    String cnumResp = sendATCommand("AT+CNUM", 2000);
-    if (cnumResp.indexOf("+CNUM:") >= 0) {
-      int idx = cnumResp.indexOf(",\"");
-      if (idx >= 0) {
-        int endIdx = cnumResp.indexOf("\"", idx + 2);
-        if (endIdx > idx) {
-          devicePhoneNumber = cnumResp.substring(idx + 2, endIdx);
-        }
-      }
-    }
-    Serial.println("本机号码: " + devicePhoneNumber);
-  }
-
   // 启动HTTP服务器
   server.on("/", handleRoot);
   server.on("/save", HTTP_POST, handleSave);
@@ -3116,11 +3287,11 @@ void setup() {
   ssl_client.setInsecure();
   digitalWrite(LED_BUILTIN, LOW);
 
-  // 如果配置有效，发送启动通知
-  if (configValid) {
-    Serial.println("配置有效，发送启动通知...");
-    String subject = "短信转发器已启动";
-    String body = "设备已启动\n设备地址: " + getDeviceUrl();
+  // 如果配置有效且SIM未插入，发送启动通知（SIM存在时通知由initSIMDependent发出）
+  if (configValid && !simInitialized) {
+    Serial.println("配置有效，发送启动通知（无SIM卡）...");
+    String subject = "短信转发器已启动（未检测到SIM卡）";
+    String body = "设备已启动，但未检测到SIM卡\n请插入SIM卡以启用短信转发功能\n设备地址: " + getDeviceUrl();
     sendEmailNotification(subject.c_str(), body.c_str());
   }
 }
@@ -3137,19 +3308,32 @@ void loop() {
     }
   }
 
-  // 定期尝试获取本机号码（如果尚未获取到）
-  static unsigned long lastCnumCheck = 0;
-  if (devicePhoneNumber == "未知号码" && millis() - lastCnumCheck >= 60000) {
-    lastCnumCheck = millis();
-    String cnumResp = sendATCommand("AT+CNUM", 2000);
-    if (cnumResp.indexOf("+CNUM:") >= 0) {
-      int idx = cnumResp.indexOf(",\"");
-      if (idx >= 0) {
-        int endIdx = cnumResp.indexOf("\"", idx + 2);
-        if (endIdx > idx) {
-          devicePhoneNumber = cnumResp.substring(idx + 2, endIdx);
-          Serial.println("后台自动获取到本机号码: " + devicePhoneNumber);
-        }
+  // ========== SIM卡热插拔检测 ==========
+  // 每5秒轮询一次SIM卡状态，检测插入/拔出
+  static unsigned long lastSimCheck = 0;
+  if (millis() - lastSimCheck >= 5000) {
+    lastSimCheck = millis();
+    bool nowPresent = checkSIMPresent();
+
+    if (nowPresent && !simPresent) {
+      // SIM卡从无到有：插入事件
+      Serial.println("🔔 检测到SIM卡插入！开始初始化...");
+      simPresent = true;
+      simInitialized = false;
+      devicePhoneNumber = "未知号码";
+      delay(500);  // 等待SIM稳定
+      initSIMDependent();
+
+    } else if (!nowPresent && simPresent) {
+      // SIM卡从有到无：拔出事件
+      Serial.println("⚠️ 检测到SIM卡被拔出！");
+      simPresent = false;
+      simInitialized = false;
+      devicePhoneNumber = "未知号码";
+      // 可选：发送拔卡通知
+      if (configValid) {
+        String simRemovedBody = "SIM卡已被拔出，短信转发功能暂停\n设备地址: " + getDeviceUrl();
+        sendEmailNotification("短信转发器：SIM卡已拔出", simRemovedBody.c_str());
       }
     }
   }
