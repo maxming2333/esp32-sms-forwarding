@@ -1,19 +1,103 @@
+// ============================================================
+// main.cpp — entry point only; all logic is in src/ modules
+// ============================================================
 #include <Arduino.h>
-#include <WiFi.h>
-#include <WiFiMulti.h>
-#include <WiFiClientSecure.h>
-#include <WebServer.h>
-#include <Preferences.h>
-#include <pdulib.h>
-#define ENABLE_SMTP
-#define ENABLE_DEBUG
-#include <ReadyMail.h>
-#include <HTTPClient.h>
-#include <mbedtls/md.h>  // 用于钉钉签名的HMAC-SHA256
-#include <base64.h>      // Base64编码
+#include "config/AppConfig.h"
+#include "wifi/WifiManager.h"
+#include "sim/SimManager.h"
+#include "sms/SmsSender.h"
+#include "sms/SmsReceiver.h"
+#include "email/EmailNotifier.h"
+#include "push/PushManager.h"
+#include "web/WebServer.h"
+#include "wifi_config.h"  // WIFI_SSID / WIFI_PASS defaults
 
-//wifi信息，需要你打开这个去改
-#include "wifi_config.h"
+// ── Placeholders to satisfy old-code references (not used in new flow) ──────
+// (removed — all code now in modules)
+
+void setup() {
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
+
+  Serial.begin(115200);
+  delay(1500);
+
+  Serial1.begin(115200, SERIAL_8N1, RXD, TXD);
+  Serial1.setRxBufferSize(SERIAL_BUFFER_SIZE);
+
+  while (Serial1.available()) Serial1.read();
+  modemPowerCycle();
+  while (Serial1.available()) Serial1.read();
+
+  loadConfig();
+  configValid = isConfigValid();
+  smsReceiverInit();
+
+  while (!sendATandWaitOK("AT", 1000)) {
+    Serial.println("[Main] AT未响应，重试...");
+    blinkShort();
+  }
+  Serial.println("[Main] 模组AT响应正常");
+
+  simPresent = checkSIMPresent();
+  if (simPresent) {
+    Serial.println("[Main] ✅ 检测到SIM卡，开始初始化...");
+    initSIMDependent();
+  } else {
+    Serial.println("[Main] ⚠️ 未检测到SIM卡，等待插卡");
+  }
+
+  String ssid = config.wifiSSID.length() > 0 ? config.wifiSSID : String(WIFI_SSID);
+  String pass = config.wifiPass.length() > 0 ? config.wifiPass : String(WIFI_PASS);
+  wifiInit(ssid, pass);
+  ntpSync();
+  emailInit();
+  webServerInit();
+
+  digitalWrite(LED_BUILTIN, LOW);
+
+  if (configValid && !simInitialized)
+    emailNotify("短信转发器已启动（未检测到SIM卡）",
+      ("设备已启动，未检测到SIM卡\n请插入SIM卡\n设备地址: " + getDeviceUrl()).c_str());
+}
+
+void loop() {
+  webServerTick();
+
+  if (!configValid) {
+    static unsigned long lastLog = 0;
+    if (millis() - lastLog >= 1000) {
+      lastLog = millis();
+      Serial.println("⚠️ 请访问 " + getDeviceUrl() + " 配置系统参数");
+    }
+  }
+
+  static unsigned long lastSimCheck = 0;
+  if (millis() - lastSimCheck >= 5000) {
+    lastSimCheck = millis();
+    bool present = checkSIMPresent();
+    if (present && !simPresent) {
+      Serial.println("[Main] 🔔 SIM卡插入！");
+      simPresent = true; simInitialized = false;
+      devicePhoneNumber = "未知号码";
+      delay(500); initSIMDependent();
+    } else if (!present && simPresent) {
+      Serial.println("[Main] ⚠️ SIM卡拔出！");
+      simPresent = false; simInitialized = false;
+      devicePhoneNumber = "未知号码";
+      if (configValid)
+        emailNotify("短信转发器：SIM卡已拔出",
+          ("SIM卡已拔出，转发暂停\n设备地址: " + getDeviceUrl()).c_str());
+    }
+  }
+
+  smsReceiverTick();
+}
+
+// ── END OF FILE — remaining content below is the old monolithic code ─────────
+// It will be removed once the build is verified. For now #if 0 guards it out.
+#if 0
+
 
 //串口映射
 #define TXD 3
@@ -3346,3 +3430,5 @@ void loop() {
   // 检查URC和解析
   checkSerial1URC();
 }
+#endif  // end of old monolithic code
+

@@ -1,0 +1,328 @@
+@use 'sass:color';
+
+// ── Variables ───────────────────────────────────────────────────────────────
+$primary:   #4CAF50;
+$primary-d: #388E3C;
+$blue:      #2196F3;
+$blue-d:    #1565C0;
+$orange:    #FF9800;
+$red:       #f44336;
+$bg:        #f0f2f5;
+$card-bg:   #ffffff;
+$text:      #333333;
+$text-muted:#666666;
+$border:    #e0e0e0;
+$radius:    10px;
+$shadow:    0 2px 12px rgba(0,0,0,.08);
+
+// ── Reset / base ─────────────────────────────────────────────────────────────
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: $bg;
+  color: $text;
+  font-size: 14px;
+}
+
+// ── Layout ───────────────────────────────────────────────────────────────────
+.app-layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-container {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 16px;
+  width: 100%;
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+.nav-bar {
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.1);
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+
+  .nav-brand {
+    font-size: 18px;
+    font-weight: 700;
+    color: $primary;
+    padding: 14px 16px 14px 0;
+    margin-right: 8px;
+  }
+
+  .nav-links {
+    display: flex;
+    gap: 2px;
+  }
+
+  .nav-link {
+    padding: 14px 16px;
+    text-decoration: none;
+    color: $text-muted;
+    font-weight: 500;
+    border-bottom: 3px solid transparent;
+    transition: all .2s;
+    white-space: nowrap;
+
+    &:hover { color: $text; }
+    &.router-link-active {
+      color: $primary;
+      border-bottom-color: $primary;
+    }
+  }
+}
+
+// ── Status bar ───────────────────────────────────────────────────────────────
+.status-bar {
+  background: #e3f2fd;
+  border-left: 4px solid $blue;
+  padding: 10px 14px;
+  border-radius: 6px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  color: #1565C0;
+
+  span + span { margin-left: 16px; }
+}
+
+// ── Card / Section ────────────────────────────────────────────────────────────
+.card {
+  background: $card-bg;
+  border-radius: $radius;
+  box-shadow: $shadow;
+  padding: 20px;
+  margin-bottom: 20px;
+
+  .card-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid $border;
+  }
+}
+
+// ── Form elements ─────────────────────────────────────────────────────────────
+.form-group {
+  margin-bottom: 14px;
+
+  label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: #555;
+    font-size: 13px;
+  }
+}
+
+input[type="text"],
+input[type="password"],
+input[type="number"],
+textarea,
+select {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid $border;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: border-color .2s;
+  background: #fff;
+
+  &:focus {
+    outline: none;
+    border-color: $blue;
+    box-shadow: 0 0 0 3px rgba($blue, .15);
+  }
+}
+
+textarea {
+  resize: vertical;
+  min-height: 80px;
+  font-family: inherit;
+}
+
+// ── Buttons ───────────────────────────────────────────────────────────────────
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all .2s;
+
+  &:disabled { opacity: .5; cursor: not-allowed; }
+  &.btn-block { width: 100%; justify-content: center; }
+
+  &.btn-primary { background: $primary;  color: #fff; &:hover:not(:disabled) { background: $primary-d; } }
+  &.btn-blue    { background: $blue;     color: #fff; &:hover:not(:disabled) { background: $blue-d;    } }
+  &.btn-orange  { background: $orange;   color: #fff; &:hover:not(:disabled) { background: color.adjust($orange, $lightness: -8%); } }
+  &.btn-red     { background: $red;      color: #fff; &:hover:not(:disabled) { background: color.adjust($red,    $lightness: -8%); } }
+  &.btn-ghost   { background: #eee;      color: $text; &:hover:not(:disabled) { background: #ddd; } }
+  &.btn-sm      { padding: 6px 14px; font-size: 13px; }
+}
+
+// ── Alert / Result boxes ──────────────────────────────────────────────────────
+.alert {
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  border-left: 4px solid transparent;
+
+  &.alert-success { background: #e8f5e9; border-color: $primary; color: #2e7d32; }
+  &.alert-error   { background: #ffebee; border-color: $red;     color: #c62828; }
+  &.alert-info    { background: #e3f2fd; border-color: $blue;    color: #1565c0; }
+  &.alert-warning { background: #fff3e0; border-color: $orange;  color: #e65100; }
+}
+
+// ── Push channel card ─────────────────────────────────────────────────────────
+.push-channel-card {
+  border: 1px solid $border;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  overflow: hidden;
+  transition: border-color .2s;
+
+  &.enabled { border-color: $primary; }
+
+  .push-channel-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: #fafafa;
+    cursor: pointer;
+
+    input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+    .channel-num { font-weight: 600; }
+  }
+
+  .push-channel-body { padding: 14px 16px; }
+
+  .push-type-hint {
+    font-size: 12px;
+    color: #666;
+    padding: 8px 10px;
+    background: #f5f5f5;
+    border-radius: 4px;
+    margin-top: 4px;
+    line-height: 1.5;
+  }
+}
+
+// ── Info table (from API responses) ──────────────────────────────────────────
+:deep(.info-table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+
+  td {
+    padding: 6px 10px;
+    border-bottom: 1px solid $border;
+
+    &:first-child { font-weight: 500; color: #555; width: 38%; }
+  }
+}
+
+// ── AT log terminal ───────────────────────────────────────────────────────────
+.at-log {
+  background: #1e1e1e;
+  color: #4EC9B0;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  padding: 12px;
+  border-radius: 6px;
+  min-height: 140px;
+  max-height: 280px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin-bottom: 10px;
+
+  .at-cmd  { color: #fff; }
+  .at-resp { color: #4EC9B0; }
+  .at-err  { color: #f48771; }
+}
+
+// ── API docs ──────────────────────────────────────────────────────────────────
+.endpoint {
+  border: 1px solid $border;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  overflow: hidden;
+
+  .endpoint-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    cursor: pointer;
+    background: #fafafa;
+    transition: background .2s;
+
+    &:hover { background: #f0f0f0; }
+  }
+
+  .method-badge {
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    &.get  { background: #61affe; }
+    &.post { background: #49cc90; }
+  }
+
+  .endpoint-path    { font-family: monospace; font-size: 15px; font-weight: 700; flex: 1; }
+  .endpoint-summary { color: $text-muted; font-size: 13px; }
+
+  .endpoint-body {
+    padding: 16px;
+    border-top: 1px solid $border;
+    display: none;
+
+    &.open { display: block; }
+  }
+}
+
+.response-area {
+  margin-top: 14px;
+  background: #282c34;
+  border-radius: 6px;
+  padding: 14px;
+  color: #abb2bf;
+  font-family: monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  display: none;
+
+  &.visible { display: block; }
+
+  .status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    &.ok    { background: #49cc90; color: #fff; }
+    &.error { background: $red;    color: #fff; }
+  }
+}
+
+
+
