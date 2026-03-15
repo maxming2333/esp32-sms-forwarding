@@ -18,10 +18,10 @@ void blinkShort(unsigned long gapMs) {
 // ── Modem power control ───────────────────────────────────────────────────────
 void modemPowerCycle() {
   pinMode(MODEM_EN_PIN, OUTPUT);
-  Serial.println("EN 拉低：关闭模组");
+  Serial.println("[SIM] EN 拉低：关闭模组");
   digitalWrite(MODEM_EN_PIN, LOW);
   delay(1200);
-  Serial.println("EN 拉高：开启模组");
+  Serial.println("[SIM] EN 拉高：开启模组");
   digitalWrite(MODEM_EN_PIN, HIGH);
   delay(6000);  // wait for full boot
 }
@@ -110,12 +110,29 @@ bool waitCEREG() {
 bool initSIMDependent() {
   Serial.println("========== 开始SIM卡初始化 ==========");
 
-  // Disable PDP to avoid unexpected data charges
   int retry = 0;
-  while (!sendATandWaitOK("AT+CGACT=0,1", 5000)) {
-    Serial.println("[SIM] CGACT=0 失败，重试...");
-    blinkShort();
-    if (++retry >= 10) { Serial.println("[SIM] ⚠️ CGACT 多次失败，继续"); break; }
+
+  // Only attempt PDP deactivation when a SIM is actually present.
+  // Without a SIM the modem returns CME ERROR immediately and retrying is pointless.
+  if (!checkSIMPresent()) {
+    Serial.println("[SIM] ⚠️ 未检测到SIM卡，跳过CGACT");
+  } else {
+    // Disable PDP to avoid unexpected data charges
+    retry = 0;
+    while (true) {
+      String cgactResp = sendATCommand("AT+CGACT=0,1", 5000);
+      if (cgactResp.indexOf("OK") >= 0) break;
+      // CME/CMS ERROR means the modem rejected the command (e.g. no context active).
+      // There is no point retrying – just move on.
+      if (cgactResp.indexOf("ERROR") >= 0) {
+        cgactResp.trim();
+        Serial.println("[SIM] ⚠️ CGACT 返回错误，跳过: " + cgactResp);
+        break;
+      }
+      Serial.println("[SIM] CGACT=0 失败，重试...");
+      blinkShort();
+      if (++retry >= 10) { Serial.println("[SIM] ⚠️ CGACT 多次失败，继续"); break; }
+    }
   }
 
   // Enable new-SMS URCs (direct PDU to serial)
@@ -127,7 +144,7 @@ bool initSIMDependent() {
       return false;
     }
   }
-  Serial.println("CNMI参数设置完成");
+  Serial.println("[SIM] CNMI参数设置完成");
 
   // Set PDU mode
   retry = 0;
@@ -138,7 +155,7 @@ bool initSIMDependent() {
       return false;
     }
   }
-  Serial.println("PDU模式设置完成");
+  Serial.println("[SIM] PDU模式设置完成");
 
   // Wait for LTE registration (≤60 s)
   retry = 0;
@@ -154,12 +171,12 @@ bool initSIMDependent() {
       return false;
     }
   }
-  Serial.println("网络已注册");
+  Serial.println("[SIM] 网络已注册");
 
   // Query own number
-  Serial.println("尝试获取本机号码...");
+  Serial.println("[SIM] 尝试获取本机号码...");
   String cnumResp = sendATCommand("AT+CNUM", 2000);
-  Serial.println("CNUM响应: " + cnumResp);
+  Serial.println("[SIM] CNUM响应: " + cnumResp);
   if (cnumResp.indexOf("+CNUM:") >= 0) {
     int a = cnumResp.indexOf(",\"");
     if (a >= 0) {
@@ -167,10 +184,20 @@ bool initSIMDependent() {
       if (b > a) devicePhoneNumber = cnumResp.substring(a + 2, b);
     }
   }
-  if (devicePhoneNumber == "未知号码" || devicePhoneNumber.length() == 0) {
-    Serial.println("无法获取本机号码，请手动配置");
+  if (devicePhoneNumber != "未知号码" && devicePhoneNumber.length() > 0) {
+    // Auto-detect succeeded – write back to manualPhone so the UI echoes it
+    Serial.println("[SIM] 本机号码（自动获取）: " + devicePhoneNumber);
+    if (config.manualPhone != devicePhoneNumber) {
+      config.manualPhone = devicePhoneNumber;
+      saveConfig();
+      Serial.println("[SIM] 本机号码已回写至配置");
+    }
+  } else if (config.manualPhone.length() > 0) {
+    // Fall back to the manually configured number
+    devicePhoneNumber = config.manualPhone;
+    Serial.println("[SIM] 使用手动配置的本机号码: " + devicePhoneNumber);
   } else {
-    Serial.println("本机号码: " + devicePhoneNumber);
+    Serial.println("[SIM] 无法获取本机号码，请在管理页面手动配置");
   }
 
   simInitialized = true;

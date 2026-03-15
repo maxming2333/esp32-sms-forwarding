@@ -25,6 +25,9 @@ void saveConfig() {
   prefs.putBool  ("trafEn",  config.trafficKeepEnabled);
   prefs.putInt   ("trafHrs", config.trafficKeepIntervalHours);
   prefs.putInt   ("trafKb",  config.trafficKeepSizeKb);
+  prefs.putString("manualPhone",  config.manualPhone);
+  prefs.putString("adminNote",    config.adminNote);
+  prefs.putString("deviceAlias",  config.deviceAlias);
 
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     String p = "push" + String(i);
@@ -68,6 +71,9 @@ void loadConfig() {
   config.trafficKeepEnabled       = gB("trafEn",  false);
   config.trafficKeepIntervalHours = gI("trafHrs", 1);
   config.trafficKeepSizeKb        = gI("trafKb",  10);
+  config.manualPhone   = gS("manualPhone",  "");
+  config.adminNote     = gS("adminNote",    "");
+  config.deviceAlias   = gS("deviceAlias",  "");
 
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     String p = "push" + String(i);

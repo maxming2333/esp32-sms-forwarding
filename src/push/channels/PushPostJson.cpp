@@ -1,4 +1,4 @@
-// POST JSON  {"sender":"…","sender_fmt":"…","message":"…","timestamp":"…","device":"…","receiver":"…"}
+// POST JSON  {"sender":"…","sender_fmt":"…","message":"…","timestamp":"…","device":"…","receiver":"…","note":"…"}
 #include "PushChannels.h"
 #include "utils/Utils.h"
 #include <HTTPClient.h>
@@ -13,6 +13,7 @@ int pushPostJson(const PushChannel& ch, const char* sender, const char* msg, con
               + "\",\"timestamp\":\"" + jsonEscape(formatTimestamp(ts))
               + "\",\"device\":\""    + jsonEscape(dev)
               + "\",\"receiver\":\""  + jsonEscape(dev)
+              + "\",\"note\":\""      + jsonEscape(config.adminNote.c_str())
               + "\"}";
   Serial.println("[PushPostJson] " + body);
   int code = http.POST(body);

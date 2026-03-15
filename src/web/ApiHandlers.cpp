@@ -78,6 +78,9 @@ void handleGetConfig() {
   json += "\"trafficKeepEnabled\":"        + String(config.trafficKeepEnabled ? "true" : "false") + ",";
   json += "\"trafficKeepIntervalHours\":"  + String(config.trafficKeepIntervalHours) + ",";
   json += "\"trafficKeepSizeKb\":"         + String(config.trafficKeepSizeKb) + ",";
+  json += "\"manualPhone\":\""   + jsonEscape(config.manualPhone)   + "\",";
+  json += "\"adminNote\":\""     + jsonEscape(config.adminNote)     + "\",";
+  json += "\"deviceAlias\":\""   + jsonEscape(config.deviceAlias)   + "\",";
   json += "\"pushChannels\":[";
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     if (i) json += ",";
@@ -115,6 +118,18 @@ void handlePostConfig() {
   config.smtpSendTo  = arg("smtpSendTo");
   config.adminPhone  = arg("adminPhone");
   config.numberBlackList = arg("numberBlackList");
+
+  // Device / admin meta
+  config.adminNote   = arg("adminNote");
+  config.deviceAlias = arg("deviceAlias");
+  // manualPhone: save whatever the user typed; if runtime auto-detect already
+  // produced a real number we leave devicePhoneNumber untouched, otherwise apply.
+  String newManualPhone = arg("manualPhone");
+  config.manualPhone = newManualPhone;
+  if (devicePhoneNumber == "未知号码" && newManualPhone.length() > 0) {
+    devicePhoneNumber = newManualPhone;
+    Serial.println("[Config] 已应用手动本机号码: " + devicePhoneNumber);
+  }
 
   // Scheduled reboot
   String rebootEn = arg("autoRebootEnabled");

@@ -60,6 +60,10 @@ struct Config {
   bool        trafficKeepEnabled;       // enable periodic traffic consumption
   int         trafficKeepIntervalHours; // interval between sessions (hours)
   int         trafficKeepSizeKb;        // target data per session (KB)
+  // ── Device / admin meta ────────────────────────────────────────────────────
+  String      manualPhone;    // manually configured own phone number (fallback / overwritten by auto-detect)
+  String      adminNote;      // freeform remark shown in logs and push notifications
+  String      deviceAlias;    // friendly name prepended to device field in push messages
 };
 
 // ── Global instances (defined in AppConfig.cpp) ──────────────────────────────

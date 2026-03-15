@@ -1,4 +1,4 @@
-// Custom template  POST body with {sender} {sender_fmt} {message} {timestamp} {device} {receiver}
+// Custom template  POST body with {sender} {sender_fmt} {message} {timestamp} {device} {receiver} {note}
 #include "PushChannels.h"
 #include "utils/Utils.h"
 #include <HTTPClient.h>
@@ -15,6 +15,7 @@ int pushCustom(const PushChannel& ch, const char* sender, const char* msg, const
   body.replace("{timestamp}",   jsonEscape(formatTimestamp(ts)));
   body.replace("{device}",      jsonEscape(dev));
   body.replace("{receiver}",    jsonEscape(dev));
+  body.replace("{note}",        jsonEscape(config.adminNote.c_str()));
   Serial.println("[PushCustom] " + body);
   HTTPClient http;
   http.begin(ch.url);

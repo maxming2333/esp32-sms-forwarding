@@ -3,6 +3,25 @@
 #include "sim/SimManager.h"
 #include <WiFi.h>
 
+// ── Build effective device identifier ────────────────────────────────────────
+// Format: "alias(phone) [note]"  (each part omitted when empty)
+static String getEffectiveDev() {
+  const String& phone = devicePhoneNumber;
+  const String& alias = config.deviceAlias;
+  const String& note  = config.adminNote;
+
+  String dev;
+  if (alias.length() > 0) {
+    dev = alias + "(" + phone + ")";
+  } else {
+    dev = phone;
+  }
+  if (note.length() > 0) {
+    dev += " [" + note + "]";
+  }
+  return dev;
+}
+
 // ── Single SMS channel dispatch ───────────────────────────────────────────────
 int pushOne(const PushChannel& ch, const char* sender, const char* msg,
             const char* ts, const char* dev) {
@@ -46,10 +65,13 @@ void pushAll(const char* sender, const char* msg, const char* ts) {
     Serial.println("[Push] WiFi未连接，跳过推送");
     return;
   }
+  String dev = getEffectiveDev();
   Serial.println("\n=== 开始多通道推送 ===");
+  if (config.adminNote.length() > 0)
+    Serial.println("[Push] 管理员备注: " + config.adminNote);
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     if (isPushChannelValid(config.pushChannels[i])) {
-      pushOne(config.pushChannels[i], sender, msg, ts, devicePhoneNumber.c_str());
+      pushOne(config.pushChannels[i], sender, msg, ts, dev.c_str());
       delay(100);
     }
   }
@@ -74,10 +96,13 @@ void pushCallAll(const char* caller, const char* ts) {
     Serial.println("[PushCall] WiFi未连接，跳过来电推送");
     return;
   }
+  String dev = getEffectiveDev();
   Serial.println("\n=== 开始来电多通道推送 ===");
+  if (config.adminNote.length() > 0)
+    Serial.println("[PushCall] 管理员备注: " + config.adminNote);
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     if (isPushChannelValid(config.pushChannels[i])) {
-      pushCallOne(config.pushChannels[i], caller, ts, devicePhoneNumber.c_str());
+      pushCallOne(config.pushChannels[i], caller, ts, dev.c_str());
       delay(100);
     }
   }

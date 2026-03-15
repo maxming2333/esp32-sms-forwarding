@@ -141,13 +141,45 @@
       </div>
     </div>
 
-    <!-- Admin phone -->
+    <!-- Admin settings -->
     <div class="card">
       <div class="card-title">👤 管理员设置</div>
+
+      <!-- admin phone -->
       <div class="form-group">
         <label>管理员手机号</label>
         <input type="text" v-model="form.adminPhone" placeholder="13800138000">
         <p style="font-size:12px;color:#888;margin:4px 0 0">管理员可通过短信发送 SMS:号码:内容 或 RESET 指令</p>
+      </div>
+
+      <!-- own number (manual fallback) -->
+      <div class="form-group">
+        <label>本机号码（手动配置）</label>
+        <input type="text" v-model="form.manualPhone" placeholder="自动获取时将自动回填此处">
+        <p style="font-size:12px;color:#888;margin:4px 0 0">
+          自动获取成功后会覆盖此项并回显；若无法自动获取，可在此手动填写作为备用。
+          <span v-if="status && status.devicePhone" style="color:#4caf50">
+            当前运行时号码：{{ status.devicePhone }}
+          </span>
+        </p>
+      </div>
+
+      <!-- device alias -->
+      <div class="form-group">
+        <label>设备别名</label>
+        <input type="text" v-model="form.deviceAlias" placeholder="如：家里设备、公司卡1">
+        <p style="font-size:12px;color:#888;margin:4px 0 0">
+          配置后推送消息的接收设备字段将显示为 <strong>别名(手机号)</strong> 格式。
+        </p>
+      </div>
+
+      <!-- admin note -->
+      <div class="form-group">
+        <label>管理员备注</label>
+        <input type="text" v-model="form.adminNote" placeholder="如：一楼路由器旁、张三的卡">
+        <p style="font-size:12px;color:#888;margin:4px 0 0">
+          备注信息会附加在串口日志与推送通知的设备标识中（格式：<strong>设备 [备注]</strong>）。
+        </p>
       </div>
     </div>
 
@@ -191,6 +223,9 @@ const form = reactive({
   trafficKeepEnabled: false,
   trafficKeepIntervalHours: 1,
   trafficKeepSizeKb: 10,
+  manualPhone: '',
+  adminNote: '',
+  deviceAlias: '',
   pushChannels: Array.from({ length: MAX_CH }, (_, i) => emptyChannel(i))
 })
 
@@ -212,6 +247,9 @@ onMounted(async () => {
         trafficKeepEnabled: cfg.trafficKeepEnabled || false,
         trafficKeepIntervalHours: cfg.trafficKeepIntervalHours || 1,
         trafficKeepSizeKb: cfg.trafficKeepSizeKb || 10,
+        manualPhone: cfg.manualPhone || '',
+        adminNote: cfg.adminNote || '',
+        deviceAlias: cfg.deviceAlias || '',
       })
     if (cfg.pushChannels?.length) {
       form.pushChannels = cfg.pushChannels.map((c, i) => ({
@@ -240,6 +278,9 @@ async function save() {
       trafficKeepEnabled: form.trafficKeepEnabled ? 'true' : 'false',
       trafficKeepIntervalHours: form.trafficKeepIntervalHours,
       trafficKeepSizeKb: form.trafficKeepSizeKb,
+      manualPhone: form.manualPhone,
+      adminNote: form.adminNote,
+      deviceAlias: form.deviceAlias,
     }
     form.pushChannels.forEach((ch, i) => {
       data[`push${i}en`]    = ch.enabled ? 'on' : ''
