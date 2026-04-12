@@ -1,2 +1,11 @@
 .pio
+.vscode
+.specify
+/specs
+node_modules
+dist
+logs
+*.log
 compile_commands.json
+.github
+!.github/workflows
