@@ -1,7 +1,7 @@
 Import("env")
 import os
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 project_dir = env["PROJECT_DIR"]
 
@@ -35,8 +35,8 @@ if ts and len(ts) >= 15 and ts[8] == 'T':
     app_build_time = f"{ts[9:11]}:{ts[11:13]}:{ts[13:15]}"
 else:
     if ts:
-        print(f"[inject_app_version] [WARN] APP_BUILD_TIMESTAMP format invalid: '{ts}', using UTC now")
-    now = datetime.now(timezone.utc)
+        print(f"[inject_app_version] [WARN] APP_BUILD_TIMESTAMP format invalid: '{ts}', using CST now")
+    now = datetime.now(timezone(timedelta(hours=8)))
     app_build_date = now.strftime("%Y-%m-%d")
     app_build_time = now.strftime("%H:%M:%S")
 
