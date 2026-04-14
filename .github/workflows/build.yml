@@ -1,35 +1,182 @@
-name: Build Arduino Firmware
+name: Build & Release Firmware
 
 on:
   push:
+    branches:
+      - master
     paths:
-      - 'code/**'
+      - 'src/**'
+      - 'data/**'
+      - 'platformio.ini'
+      - '.github/workflows/build.yml'
+      - 'VERSION'
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v6
-    
-    - name: Setup Arduino CLI
-      uses: arduino/setup-arduino-cli@v2
-    
-    - name: Install ESP32 platform
-      run: |
-        arduino-cli config init
-        arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
-        arduino-cli core update-index
-        arduino-cli core install esp32:esp32
-    
-    - name: Install dependencies
-      run: |
-        arduino-cli lib install "pdulib"
-        arduino-cli lib install "ReadyMail"
-    
-    - name: Compile firmware
-      run: |
-        arduino-cli compile --fqbn esp32:esp32:esp32c3 ./code/code.ino
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate VERSION tag
+        id: version
+        run: |
+          if [ -f VERSION ]; then
+            PREFIX=$(cat VERSION | tr -d '[:space:]')
+          else
+            PREFIX="v1"
+          fi
+          if [[ ! "$PREFIX" =~ ^[vV] ]]; then
+            PREFIX="v${PREFIX}"
+          fi
+          SHA_SHORT=$(git rev-parse --short=7 HEAD)
+          FULL_SHA=$(git rev-parse HEAD)
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          VERSION_TAG="${PREFIX}-${SHA_SHORT}"
+          echo "VERSION_TAG=${VERSION_TAG}" >> $GITHUB_ENV
+          echo "SHA_SHORT=${SHA_SHORT}" >> $GITHUB_ENV
+          echo "FULL_SHA=${FULL_SHA}" >> $GITHUB_ENV
+          echo "TIMESTAMP=${TIMESTAMP}" >> $GITHUB_ENV
+
+      - name: Cache PlatformIO dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            .pio/libdeps
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-
+
+      - name: Clean build environment
+        run: |
+          rm -rf .pio/build
+          rm -rf ~/.platformio/cache
+
+      - name: Install PlatformIO
+        run: |
+          pip install --upgrade pip
+          pip install platformio
+
+      - name: Install esptool
+        run: pip install "esptool>=4.8"
+
+      - name: Build firmware
+        run: pio run -e makergo_esp32c3_supermini
+
+      - name: Compress data/ for LittleFS
+        if: github.event_name != 'pull_request'
+        run: python3 script/compress_data.py
+
+      - name: Build LittleFS image
+        if: github.event_name != 'pull_request'
+        run: pio run -e makergo_esp32c3_supermini -t buildfs
+
+      - name: Restore data/ directory
+        if: github.event_name != 'pull_request'
+        run: python3 script/restore_data.py
+
+      - name: Merge firmware binaries
+        if: github.event_name != 'pull_request'
+        run: |
+          BUILD_DIR=".pio/build/makergo_esp32c3_supermini"
+          esptool.py --chip esp32c3 merge_bin \
+            --flash_mode qio --flash_freq 80m --flash_size 4MB \
+            -o "${BUILD_DIR}/main.bin" \
+            0x0      "${BUILD_DIR}/bootloader.bin" \
+            0x8000   "${BUILD_DIR}/partitions.bin" \
+            0x10000  "${BUILD_DIR}/firmware.bin"
+          esptool.py --chip esp32c3 merge_bin \
+            --flash_mode qio --flash_freq 80m --flash_size 4MB \
+            -o "${BUILD_DIR}/full.bin" \
+            0x0      "${BUILD_DIR}/bootloader.bin" \
+            0x8000   "${BUILD_DIR}/partitions.bin" \
+            0x10000  "${BUILD_DIR}/firmware.bin" \
+            0x290000 "${BUILD_DIR}/littlefs.bin"
+
+      - name: Generate release notes
+        if: github.event_name != 'pull_request'
+        run: |
+          BUILD_DIR=".pio/build/makergo_esp32c3_supermini"
+          HASH_FULL=$(sha256sum "${BUILD_DIR}/full.bin" | awk '{print $1}')
+          HASH_MAIN=$(sha256sum "${BUILD_DIR}/main.bin" | awk '{print $1}')
+          HASH_LITTLEFS=$(sha256sum "${BUILD_DIR}/littlefs.bin" | awk '{print $1}')
+          HASH_FIRMWARE=$(sha256sum "${BUILD_DIR}/firmware.bin" | awk '{print $1}')
+          HASH_BOOTLOADER=$(sha256sum "${BUILD_DIR}/bootloader.bin" | awk '{print $1}')
+          HASH_PARTITIONS=$(sha256sum "${BUILD_DIR}/partitions.bin" | awk '{print $1}')
+          cat > release_notes.md << EOF
+          ## 固件版本: ${VERSION_TAG}
+
+          | 属性 | 值 |
+          |------|-----|
+          | Commit | ${FULL_SHA} |
+          | 构建时间 | ${TIMESTAMP} UTC |
+          | 目标设备 | MakerGO ESP32-C3 SuperMini |
+
+          ## 文件说明
+
+          | 文件名 | 用途 | 烧录地址 |
+          |--------|------|----------|
+          | full.bin | 全量固件（含 Web UI）一键烧录 | \`0x0\` |
+          | main.bin | 主固件（不含 Web UI） | \`0x0\` |
+          | littlefs.bin | Web UI 文件系统 | \`0x290000\` |
+          | firmware.bin | 应用代码（原始产物） | \`0x10000\` |
+          | bootloader.bin | 引导加载程序（原始产物） | \`0x0\` |
+          | partitions.bin | 分区表（原始产物） | \`0x8000\` |
+
+          ## 烧录说明
+
+          **完整烧录**（推荐新装机）：
+          \`\`\`bash
+          esptool.py --chip esp32c3 --baud 460800 write_flash 0x0 full.bin
+          \`\`\`
+
+          **仅更新主固件**（保留 Web UI）：
+          \`\`\`bash
+          esptool.py --chip esp32c3 --baud 460800 write_flash 0x0 main.bin
+          \`\`\`
+
+          **仅更新 Web UI**（保留固件）：
+          \`\`\`bash
+          esptool.py --chip esp32c3 --baud 460800 write_flash 0x290000 littlefs.bin
+          \`\`\`
+
+          ## SHA256 校验
+
+          \`\`\`
+          ${HASH_FULL}  full.bin
+          ${HASH_MAIN}  main.bin
+          ${HASH_LITTLEFS}  littlefs.bin
+          ${HASH_FIRMWARE}  firmware.bin
+          ${HASH_BOOTLOADER}  bootloader.bin
+          ${HASH_PARTITIONS}  partitions.bin
+          \`\`\`
+          EOF
+
+      - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION_TAG }}
+          name: Release ${{ env.VERSION_TAG }}
+          body_path: release_notes.md
+          make_latest: "true"
+          fail_on_unmatched_files: true
+          files: |
+            .pio/build/makergo_esp32c3_supermini/full.bin
+            .pio/build/makergo_esp32c3_supermini/main.bin
+            .pio/build/makergo_esp32c3_supermini/littlefs.bin
+            .pio/build/makergo_esp32c3_supermini/firmware.bin
+            .pio/build/makergo_esp32c3_supermini/bootloader.bin
+            .pio/build/makergo_esp32c3_supermini/partitions.bin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
