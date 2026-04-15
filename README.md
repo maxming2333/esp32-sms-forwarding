@@ -1,6 +1,6 @@
 # 低成本短信转发器（ESP32-C3 + ML307R-DC）
 
-> 本项目来源于 https://github.com/chenxuuu/sms_forwarding，在此基础上改用 C++17 + PlatformIO 进行重构，并增加了更多推送方式和功能。
+> 本项目来源于 https://github.com/chenxuuu/sms_forwarding ，在此基础上改用 C++17 + PlatformIO 进行重构，并增加了更多推送方式和功能。
 
 基于 ESP32-C3 和 ML307R-DC 的低成本短信转发器，支持多种推送方式，适合需要远程接收短信通知的场景，如验证码接收、物联网设备监控等。
 
