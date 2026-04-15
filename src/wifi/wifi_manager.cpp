@@ -12,35 +12,42 @@ static void enterAPMode() {
 }
 
 void wifiManagerInit() {
-  if (config.wifiSsid.length() == 0) {
-    LOG("WiFi", "SSID未配置，直接进入AP模式");
+  if (config.wifiCount == 0) {
+    LOG("WiFi", "未配置任何WiFi，直接进入AP模式");
     enterAPMode();
     return;
   }
 
-  LOG("WiFi", "准备连接到WiFi: %s", config.wifiSsid.c_str());
   // 扫描所有信道以连接信号最强的 AP，防止在 mesh 组网这类场景中连接到弱 AP
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
 
-  for (int attempt = 1; attempt <= 3; attempt++) {
-    WiFi.begin(config.wifiSsid.c_str(), config.wifiPass.c_str(), 0, nullptr, true);
+  for (int w = 0; w < config.wifiCount; w++) {
+    if (config.wifiList[w].ssid.length() == 0) continue;
 
-    unsigned long start = millis();
-    while (millis() - start < 5000) {
-      if (WiFi.status() == WL_CONNECTED) {
-        s_mode = WIFI_MODE_STA_CONNECTED;
-        LOG("WiFi", "第 %d/3 次连接成功，IP: %s", attempt, WiFi.localIP().toString().c_str());
-        return;
+    const char* ssid = config.wifiList[w].ssid.c_str();
+    const char* pass = config.wifiList[w].password.c_str();
+    LOG("WiFi", "尝试第 %d/%d 条WiFi: %s", w + 1, config.wifiCount, ssid);
+
+    for (int attempt = 1; attempt <= 3; attempt++) {
+      WiFi.begin(ssid, pass, 0, nullptr, true);
+
+      unsigned long start = millis();
+      while (millis() - start < 3000) {
+        if (WiFi.status() == WL_CONNECTED) {
+          s_mode = WIFI_MODE_STA_CONNECTED;
+          LOG("WiFi", "第 %d/%d 条WiFi第 %d/3 次连接成功，IP: %s", w + 1, config.wifiCount, attempt, WiFi.localIP().toString().c_str());
+          return;
+        }
+        delay(100);
       }
-      delay(100);
-    }
 
-    LOG("WiFi", "第 %d/3 次连接超时，重置WiFi后重试", attempt);
-    WiFi.disconnect(true);
-    delay(500);
+      LOG("WiFi", "第 %d/%d 条WiFi第 %d/3 次连接超时", w + 1, config.wifiCount, attempt);
+      WiFi.disconnect(true);
+      delay(200);
+    }
   }
 
-  LOG("WiFi", "3次连接全部失败，切换到AP模式");
+  LOG("WiFi", "所有WiFi条目全部失败，切换到AP模式");
   enterAPMode();
 }
 

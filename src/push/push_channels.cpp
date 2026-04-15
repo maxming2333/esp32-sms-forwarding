@@ -54,17 +54,21 @@ static int64_t getUtcMillis() {
 
 // ---------- channel implementations ----------
 
-bool sendPostJson(const PushChannel& ch, const String& sender, const String& message, const String& timestamp) {
+bool sendPostJson(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   HTTPClient http;
   http.begin(ch.url);
   http.addHeader("Content-Type", "application/json");
 
-  JsonDocument doc;
-  doc["sender"]    = sender;
-  doc["message"]   = message;
-  doc["timestamp"] = timestamp;
   String body;
-  serializeJson(doc, body);
+  if (renderedBody.length() > 0) {
+    body = renderedBody;
+  } else {
+    JsonDocument doc;
+    doc["sender"]    = sender;
+    doc["message"]   = message;
+    doc["timestamp"] = timestamp;
+    serializeJson(doc, body);
+  }
 
   LOG("Push", "POST JSON to %s: %s", ch.url.c_str(), body.c_str());
   int code = http.POST(body);
@@ -73,14 +77,14 @@ bool sendPostJson(const PushChannel& ch, const String& sender, const String& mes
   return code >= 200 && code < 300;
 }
 
-bool sendBark(const PushChannel& ch, const String& sender, const String& message, const String& timestamp) {
+bool sendBark(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   HTTPClient http;
   http.begin(ch.url);
   http.addHeader("Content-Type", "application/json");
 
   JsonDocument doc;
   doc["title"] = sender;
-  doc["body"]  = message;
+  doc["body"]  = renderedBody.length() > 0 ? renderedBody : message;
   String body;
   serializeJson(doc, body);
 
@@ -91,12 +95,12 @@ bool sendBark(const PushChannel& ch, const String& sender, const String& message
   return code >= 200 && code < 300;
 }
 
-bool sendGet(const PushChannel& ch, const String& sender, const String& message, const String& timestamp) {
+bool sendGet(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   HTTPClient http;
   String url = ch.url;
   url += (url.indexOf('?') == -1) ? "?" : "&";
   url += "sender=" + urlEncode(sender);
-  url += "&message=" + urlEncode(message);
+  url += "&message=" + urlEncode(renderedBody.length() > 0 ? renderedBody : message);
   url += "&timestamp=" + urlEncode(timestamp);
 
   LOG("Push", "GET %s", url.c_str());
@@ -107,7 +111,7 @@ bool sendGet(const PushChannel& ch, const String& sender, const String& message,
   return code >= 200 && code < 300;
 }
 
-bool sendDingtalk(const PushChannel& ch, const String& sender, const String& message, const String& timestamp) {
+bool sendDingtalk(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   HTTPClient http;
   String webhookUrl = ch.url;
 
@@ -123,9 +127,11 @@ bool sendDingtalk(const PushChannel& ch, const String& sender, const String& mes
   http.begin(webhookUrl);
   http.addHeader("Content-Type", "application/json");
 
+  String content = renderedBody.length() > 0 ? renderedBody
+                 : ("📱短信通知\n发送者: " + sender + "\n内容: " + message + "\n时间: " + timestamp);
+
   JsonDocument doc;
   doc["msgtype"] = "text";
-  String content = "📱短信通知\n发送者: " + sender + "\n内容: " + message + "\n时间: " + timestamp;
   doc["text"]["content"] = content;
   String body;
   serializeJson(doc, body);
@@ -137,7 +143,7 @@ bool sendDingtalk(const PushChannel& ch, const String& sender, const String& mes
   return code >= 200 && code < 300;
 }
 
-bool sendPushPlus(const PushChannel& ch, const String& sender, const String& message, const String& timestamp) {
+bool sendPushPlus(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   HTTPClient http;
   String url = ch.url.length() > 0 ? ch.url : "http://www.pushplus.plus/send";
   http.begin(url);
@@ -152,10 +158,13 @@ bool sendPushPlus(const PushChannel& ch, const String& sender, const String& mes
     }
   }
 
+  String content = renderedBody.length() > 0 ? renderedBody
+                 : ("<b>发送者:</b> " + sender + "<br><b>时间:</b> " + timestamp + "<br><b>内容:</b><br>" + message);
+
   JsonDocument doc;
   doc["token"]   = ch.key1;
   doc["title"]   = "短信来自: " + sender;
-  doc["content"] = "<b>发送者:</b> " + sender + "<br><b>时间:</b> " + timestamp + "<br><b>内容:</b><br>" + message;
+  doc["content"] = content;
   doc["channel"] = channelValue;
   String body;
   serializeJson(doc, body);
@@ -167,14 +176,16 @@ bool sendPushPlus(const PushChannel& ch, const String& sender, const String& mes
   return code >= 200 && code < 300;
 }
 
-bool sendServerChan(const PushChannel& ch, const String& sender, const String& message, const String& timestamp) {
+bool sendServerChan(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   HTTPClient http;
   String url = ch.url.length() > 0 ? ch.url : ("https://sctapi.ftqq.com/" + ch.key1 + ".send");
   http.begin(url);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
+  String desp = renderedBody.length() > 0 ? renderedBody
+              : ("**发送者:** " + sender + "\n\n**时间:** " + timestamp + "\n\n**内容:**\n\n" + message);
   String postData = "title=" + urlEncode("短信来自: " + sender);
-  postData += "&desp=" + urlEncode("**发送者:** " + sender + "\n\n**时间:** " + timestamp + "\n\n**内容:**\n\n" + message);
+  postData += "&desp=" + urlEncode(desp);
 
   LOG("Push", "Server酱: %s", postData.c_str());
   int code = http.POST(postData);
@@ -183,28 +194,21 @@ bool sendServerChan(const PushChannel& ch, const String& sender, const String& m
   return code >= 200 && code < 300;
 }
 
-bool sendCustom(const PushChannel& ch, const String& sender, const String& message, const String& timestamp) {
-  if (ch.customBody.length() == 0) {
-    LOG("Push", "自定义模板为空，跳过");
-    return false;
-  }
+bool sendCustom(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+  // 类型7（POST请求）：使用 renderedBody（非空）或空 body（FR-008）
   HTTPClient http;
   http.begin(ch.url);
   http.addHeader("Content-Type", "application/json");
 
-  String body = ch.customBody;
-  body.replace("{sender}", sender);
-  body.replace("{message}", message);
-  body.replace("{timestamp}", timestamp);
-
-  LOG("Push", "自定义: %s", body.c_str());
+  String body = renderedBody;  // 可为空（FR-008: 留空时发送空 POST body）
+  LOG("Push", "POST请求: %s，body长度: %d", ch.url.c_str(), body.length());
   int code = http.POST(body);
   LOG("Push", "响应码: %d", code);
   http.end();
   return code >= 200 && code < 300;
 }
 
-bool sendFeishu(const PushChannel& ch, const String& sender, const String& message, const String& timestamp) {
+bool sendFeishu(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   HTTPClient http;
   http.begin(ch.url);
   http.addHeader("Content-Type", "application/json");
@@ -226,8 +230,10 @@ bool sendFeishu(const PushChannel& ch, const String& sender, const String& messa
     doc["sign"]      = base64::encode(hmacResult, 32);
   }
 
-  doc["msg_type"]           = "text";
-  doc["content"]["text"]    = "📱短信通知\n发送者: " + sender + "\n内容: " + message + "\n时间: " + timestamp;
+  String text = renderedBody.length() > 0 ? renderedBody
+              : ("📱短信通知\n发送者: " + sender + "\n内容: " + message + "\n时间: " + timestamp);
+  doc["msg_type"]        = "text";
+  doc["content"]["text"] = text;
 
   String body;
   serializeJson(doc, body);
@@ -239,7 +245,7 @@ bool sendFeishu(const PushChannel& ch, const String& sender, const String& messa
   return code >= 200 && code < 300;
 }
 
-bool sendGotify(const PushChannel& ch, const String& sender, const String& message, const String& timestamp) {
+bool sendGotify(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   HTTPClient http;
   String url = ch.url;
   if (!url.endsWith("/")) url += "/";
@@ -247,9 +253,10 @@ bool sendGotify(const PushChannel& ch, const String& sender, const String& messa
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
 
+  String msg = renderedBody.length() > 0 ? renderedBody : (message + "\n\n时间: " + timestamp);
   JsonDocument doc;
   doc["title"]    = "短信来自: " + sender;
-  doc["message"]  = message + "\n\n时间: " + timestamp;
+  doc["message"]  = msg;
   doc["priority"] = 5;
   String body;
   serializeJson(doc, body);
@@ -261,7 +268,7 @@ bool sendGotify(const PushChannel& ch, const String& sender, const String& messa
   return code >= 200 && code < 300;
 }
 
-bool sendTelegram(const PushChannel& ch, const String& sender, const String& message, const String& timestamp) {
+bool sendTelegram(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   HTTPClient http;
   String baseUrl = ch.url.length() > 0 ? ch.url : "https://api.telegram.org";
   if (baseUrl.endsWith("/")) baseUrl.remove(baseUrl.length() - 1);
@@ -269,9 +276,11 @@ bool sendTelegram(const PushChannel& ch, const String& sender, const String& mes
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
 
+  String text = renderedBody.length() > 0 ? renderedBody
+              : ("📱短信通知\n发送者: " + sender + "\n内容: " + message + "\n时间: " + timestamp);
   JsonDocument doc;
   doc["chat_id"] = ch.key1;
-  doc["text"]    = "📱短信通知\n发送者: " + sender + "\n内容: " + message + "\n时间: " + timestamp;
+  doc["text"]    = text;
   String body;
   serializeJson(doc, body);
 
@@ -282,7 +291,7 @@ bool sendTelegram(const PushChannel& ch, const String& sender, const String& mes
   return code >= 200 && code < 300;
 }
 
-bool sendWechatWork(const PushChannel& ch, const String& sender, const String& message, const String& timestamp) {
+bool sendWechatWork(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   HTTPClient http;
   String webhookUrl = ch.url;
 
@@ -308,9 +317,11 @@ bool sendWechatWork(const PushChannel& ch, const String& sender, const String& m
   http.addHeader("Content-Type", "application/json");
   http.setTimeout(10000);
 
+  String content = renderedBody.length() > 0 ? renderedBody
+                 : ("📱短信通知\n发件人: " + sender + "\n内容: " + message + "\n时间: " + timestamp);
   JsonDocument doc;
   doc["msgtype"] = "text";
-  doc["text"]["content"] = "📱短信通知\n发件人: " + sender + "\n内容: " + message + "\n时间: " + timestamp;
+  doc["text"]["content"] = content;
   String body;
   serializeJson(doc, body);
 
@@ -325,13 +336,18 @@ bool sendWechatWork(const PushChannel& ch, const String& sender, const String& m
   return true;
 }
 
-bool sendSmsPush(const PushChannel& ch, const String& sender, const String& message, const String& timestamp) {
-  String prefix = "[转发]发件人: " + sender + "\n内容: ";
-  String content = prefix + message;
-  if ((int)content.length() > 70) {
-    int maxMsg = 67 - (int)prefix.length();
-    if (maxMsg < 0) maxMsg = 0;
-    content = prefix + message.substring(0, maxMsg) + "[截断]";
+bool sendSmsPush(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+  String content;
+  if (renderedBody.length() > 0) {
+    content = renderedBody;
+  } else {
+    String prefix = "[转发]发件人: " + sender + "\n内容: ";
+    content = prefix + message;
+    if ((int)content.length() > 70) {
+      int maxMsg = 67 - (int)prefix.length();
+      if (maxMsg < 0) maxMsg = 0;
+      content = prefix + message.substring(0, maxMsg) + "[截断]";
+    }
   }
   LOG("Push", "SMS备份推送到: %s", ch.url.c_str());
   bool ok = sendSMSPDU(ch.url.c_str(), content.c_str());

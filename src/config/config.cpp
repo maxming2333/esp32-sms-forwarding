@@ -22,6 +22,10 @@ void loadConfig() {
   config.webUser    = preferences.isKey("webUser")    ? preferences.getString("webUser", DEFAULT_WEB_USER) : DEFAULT_WEB_USER;
   config.webPass    = preferences.isKey("webPass")    ? preferences.getString("webPass", DEFAULT_WEB_PASS) : DEFAULT_WEB_PASS;
 
+  config.pushCount = preferences.isKey("pushCount") ? (int)preferences.getUChar("pushCount", 5) : 5;
+  if (config.pushCount < 1) config.pushCount = 1;
+  if (config.pushCount > MAX_PUSH_CHANNELS) config.pushCount = MAX_PUSH_CHANNELS;
+
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     String prefix = "push" + String(i);
     config.pushChannels[i].enabled    = preferences.getBool((prefix + "en").c_str(), false);
@@ -45,8 +49,30 @@ void loadConfig() {
 
   config.simNotifyEnabled = preferences.isKey("simNotify") ? preferences.getBool("simNotify", false) : false;
 
-  config.wifiSsid = preferences.isKey("wifiSsid") ? preferences.getString("wifiSsid", "") : "";
-  config.wifiPass = preferences.isKey("wifiPass")  ? preferences.getString("wifiPass", "")  : "";
+  // Multi-WiFi: 读取 wifiCount，如不存在则迁移旧单 WiFi 键（FR-017）
+  if (preferences.isKey("wifiCount")) {
+    config.wifiCount = (int)preferences.getUChar("wifiCount", 0);
+    if (config.wifiCount < 0) config.wifiCount = 0;
+    if (config.wifiCount > MAX_WIFI_ENTRIES) config.wifiCount = MAX_WIFI_ENTRIES;
+    for (int i = 0; i < config.wifiCount; i++) {
+      String ks = "wifi" + String(i) + "ssid";
+      String kp = "wifi" + String(i) + "pass";
+      config.wifiList[i].ssid     = preferences.isKey(ks.c_str()) ? preferences.getString(ks.c_str(), "") : "";
+      config.wifiList[i].password = preferences.isKey(kp.c_str()) ? preferences.getString(kp.c_str(), "") : "";
+    }
+  } else {
+    // 迁移旧单 WiFi 键
+    String legacySsid = preferences.isKey("wifiSsid") ? preferences.getString("wifiSsid", "") : "";
+    String legacyPass = preferences.isKey("wifiPass")  ? preferences.getString("wifiPass",  "") : "";
+    if (legacySsid.length() > 0) {
+      config.wifiList[0].ssid     = legacySsid;
+      config.wifiList[0].password = legacyPass;
+      config.wifiCount = 1;
+      LOG("Config", "已迁移旧单WiFi配置到wifiList[0]");
+    } else {
+      config.wifiCount = 0;
+    }
+  }
 
   config.pushStrategy = (PushStrategy)(preferences.isKey("pushStrategy") ? preferences.getUChar("pushStrategy", 0) : 0);
 
@@ -72,6 +98,7 @@ void saveConfig() {
   preferences.putString("webUser",    config.webUser);
   preferences.putString("webPass",    config.webPass);
 
+  preferences.putUChar("pushCount", (uint8_t)config.pushCount);
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     String prefix = "push" + String(i);
     preferences.putBool((prefix + "en").c_str(),   config.pushChannels[i].enabled);
@@ -85,8 +112,13 @@ void saveConfig() {
 
   preferences.putBool("simNotify", config.simNotifyEnabled);
 
-  preferences.putString("wifiSsid", config.wifiSsid);
-  preferences.putString("wifiPass", config.wifiPass);
+  preferences.putUChar("wifiCount", (uint8_t)config.wifiCount);
+  for (int i = 0; i < config.wifiCount; i++) {
+    String ks = "wifi" + String(i) + "ssid";
+    String kp = "wifi" + String(i) + "pass";
+    preferences.putString(ks.c_str(), config.wifiList[i].ssid);
+    preferences.putString(kp.c_str(), config.wifiList[i].password);
+  }
 
   preferences.putUChar("pushStrategy", (uint8_t)config.pushStrategy);
 
@@ -164,13 +196,16 @@ void resetConfig() {
   p.end();
 
   config = Config{};
-  config.smtpPort = 465;
-  config.webUser  = DEFAULT_WEB_USER;
-  config.webPass  = DEFAULT_WEB_PASS;
+  config.smtpPort  = 465;
+  config.webUser   = DEFAULT_WEB_USER;
+  config.webPass   = DEFAULT_WEB_PASS;
+  config.pushCount = 5;
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     config.pushChannels[i].name = "通道" + String(i + 1);
     config.pushChannels[i].type = PUSH_TYPE_POST_JSON;
   }
+  config.wifiCount = 1;
+  config.wifiList[0] = WifiEntry{"", ""};
 
   rebootSchedule = RebootSchedule{};
   rebootSchedule.hour      = 3;
@@ -211,7 +246,7 @@ bool isConfigValid() {
                     config.smtpPass.length() > 0   &&
                     config.smtpSendTo.length() > 0;
   bool pushValid = false;
-  for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
+  for (int i = 0; i < config.pushCount; i++) {
     if (isPushChannelValid(config.pushChannels[i])) {
       pushValid = true;
       break;

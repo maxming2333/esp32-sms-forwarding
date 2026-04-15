@@ -106,6 +106,8 @@
             </label>
           </div>
           <div id="pushChannels"></div>
+          <button type="button" id="addPushBtn" onclick="addPushChannel()" style="background:#607D8B;margin-top:8px;width:100%;">➕ 添加推送通道</button>
+          <input type="hidden" id="pushCountField" name="pushCount" value="5">
         </div>
 
         <div class="section">
@@ -129,15 +131,9 @@
       <!-- WiFi设置区块 -->
       <div class="section" style="margin-top:20px;">
         <div class="section-title">📶 WiFi 设置</div>
-        <div class="hint" style="margin-bottom:12px;">修改后设备将立即重启以应用新WiFi配置。</div>
-        <div class="form-group">
-          <label>WiFi SSID（网络名称）</label>
-          <input type="text" id="wifiSsid" placeholder="你家WiFi名称">
-        </div>
-        <div class="form-group">
-          <label>WiFi 密码</label>
-          <input type="text" id="wifiPass" placeholder="你家WiFi密码">
-        </div>
+        <div class="hint" style="margin-bottom:12px;">可配置最多 5 条 WiFi，设备启动时按顺序尝试连接。修改后设备将立即重启以应用新 WiFi 配置。</div>
+        <div id="wifiList"></div>
+        <button type="button" id="addWifiBtn" onclick="addWifi()" style="background:#607D8B;margin-bottom:8px;">➡️ 添加 WiFi</button>
         <button type="button" onclick="saveWifi()" style="background:#2196F3;">📡 保存并重启</button>
         <div id="wifiResult" style="display:none;margin-top:8px;padding:8px;border-radius:3px;"></div>
       </div>
@@ -166,7 +162,7 @@
       4: '钉钉机器人',
       5: 'PushPlus',
       6: 'Server酱',
-      7: '自定义模板',
+      7: 'POST请求',
       8: '飞书机器人',
       9: 'Gotify',
       10: 'Telegram Bot',
@@ -187,10 +183,12 @@
       for (var t = 0; t <= 12; t++) {
         typeOptions += '<option value="' + t + '"' + (ch.type === t ? ' selected' : '') + '>' + PUSH_TYPE_LABELS[t] + '</option>';
       }
-      return '<div class="push-channel' + (ch.enabled ? ' enabled' : '') + '" id="channel' + i + '">' +
+      var canRemove = g_pushChannels.length > 1;
+      return '<div class="push-channel' + (ch.enabled ? ' enabled' : '') + '" id="channel' + i + '" data-chindex="' + i + '">' +
         '<div class="push-channel-header">' +
           '<input type="checkbox" id="push' + i + 'en" name="push' + i + 'en" value="1"' + (ch.enabled ? ' checked' : '') + ' onchange="toggleChannel(' + i + ')">' +
           '<label class="label-inline" for="push' + i + 'en">通道 ' + (i + 1) + (ch.name ? (': ' + escHtml(ch.name)) : '') + '</label>' +
+          (canRemove ? '<button type="button" onclick="removePushChannel(' + i + ')" style="margin-left:auto;width:auto;padding:2px 8px;margin-top:0;background:#e53935;font-size:12px;">删除</button>' : '') +
         '</div>' +
         '<div class="push-channel-body">' +
           '<div class="form-group">' +
@@ -215,12 +213,10 @@
               '<input type="text" name="push' + i + 'key2" id="key2' + i + '" value="' + escHtml(ch.key2) + '">' +
             '</div>' +
           '</div>' +
-          '<div id="custom' + i + '" style="display:none">' +
-            '<div class="form-group">' +
-              '<label>自定义请求体模板</label>' +
-              '<textarea name="push' + i + 'body" id="body' + i + '">' + escHtml(ch.customBody) + '</textarea>' +
-              '<div class="hint">占位符: {sender} {message} {timestamp}</div>' +
-            '</div>' +
+          '<div class="form-group">' +
+            '<label>自定义推送消息格式</label>' +
+            '<textarea name="push' + i + 'body" id="body' + i + '" maxlength="512">' + escHtml(ch.customBody) + '</textarea>' +
+            '<div class="hint">不填，则使用默认格式；支持占位符：{sender} {message} {timestamp} {date} {device_id} {carrier} {sim_number} {sim_slot} {signal}</div>' +
           '</div>' +
           '<div class="push-type-hint" id="hint' + i + '"></div>' +
         '</div>' +
@@ -242,12 +238,10 @@
       var sel = document.getElementById('push' + i + 'type');
       var hint = document.getElementById('hint' + i);
       var extra = document.getElementById('extra' + i);
-      var custom = document.getElementById('custom' + i);
       var key2group = document.getElementById('key2group' + i);
       var type = parseInt(sel.value);
 
       extra.style.display = 'none';
-      custom.style.display = 'none';
       key2group.style.display = 'none';
       document.getElementById('push' + i + 'label').innerText = 'Webhook URL';
       document.getElementById('push' + i + 'url').placeholder = 'https://...';
@@ -281,8 +275,7 @@
         document.getElementById('key1label' + i).innerText = 'SendKey';
         document.getElementById('key1' + i).placeholder = 'SCT...';
       } else if (type === 7) {
-        hint.innerHTML = '<b>自定义模板：</b><br>在请求体模板中使用 {sender} {message} {timestamp} 作为占位符';
-        custom.style.display = 'block';
+        hint.innerHTML = '<b>POST请求：</b><br>向指定 URL 发送 HTTP POST 请求，请求体为「自定义推送消息格式」文本（Content-Type: text/plain）。';
       } else if (type === 8) {
         hint.innerHTML = '<b>飞书机器人：</b><br>填写Webhook地址，如需签名验证请填Secret';
         extra.style.display = 'block';
@@ -319,6 +312,53 @@
       }
     }
 
+    // ---------- 推送通道动态管理 ----------
+    var g_pushChannels = [];
+    var MAX_PUSH = 10;
+
+    function readChannelFromDom(i) {
+      var en = document.getElementById('push' + i + 'en');
+      return {
+        enabled:    !!(en && en.checked),
+        type:       parseInt((document.getElementById('push' + i + 'type') || {value:'1'}).value || '1'),
+        name:       (document.getElementById('push' + i + 'name') || {value:''}).value || '',
+        url:        (document.getElementById('push' + i + 'url')  || {value:''}).value || '',
+        key1:       (document.getElementById('key1' + i)  || {value:''}).value || '',
+        key2:       (document.getElementById('key2' + i)  || {value:''}).value || '',
+        customBody: (document.getElementById('body' + i)  || {value:''}).value || ''
+      };
+    }
+
+    function renderPushChannels() {
+      var container = document.getElementById('pushChannels');
+      container.innerHTML = '';
+      for (var i = 0; i < g_pushChannels.length; i++) {
+        var ch = Object.assign({}, g_pushChannels[i], { index: i });
+        container.insertAdjacentHTML('beforeend', buildPushChannelHtml(ch));
+        updateTypeHint(i);
+      }
+      document.getElementById('addPushBtn').disabled = (g_pushChannels.length >= MAX_PUSH);
+      document.getElementById('pushCountField').value = g_pushChannels.length;
+    }
+
+    function addPushChannel() {
+      for (var i = 0; i < g_pushChannels.length; i++) {
+        try { g_pushChannels[i] = readChannelFromDom(i); } catch(e) {}
+      }
+      if (g_pushChannels.length >= MAX_PUSH) return;
+      g_pushChannels.push({ enabled: false, type: 1, name: '', url: '', key1: '', key2: '', customBody: '' });
+      renderPushChannels();
+    }
+
+    function removePushChannel(idx) {
+      if (g_pushChannels.length <= 1) return;
+      for (var i = 0; i < g_pushChannels.length; i++) {
+        try { g_pushChannels[i] = readChannelFromDom(i); } catch(e) {}
+      }
+      g_pushChannels.splice(idx, 1);
+      renderPushChannels();
+    }
+
     var g_adminPhone = '';
 
     function fillForm(data) {
@@ -331,15 +371,17 @@
       document.getElementById('adminPhone').value = data.adminPhone  || '';
       document.getElementById('simNotifyEnabled').checked = !!data.simNotifyEnabled;
 
-      var pushDiv = document.getElementById('pushChannels');
-      pushDiv.innerHTML = '';
       var channels = data.pushChannels || [];
-      for (var j = 0; j < 5; j++) {
-        var ch = channels[j] || { index: j, enabled: false, type: 0, name: '', url: '', key1: '', key2: '', customBody: '' };
-        ch.index = j;
-        pushDiv.insertAdjacentHTML('beforeend', buildPushChannelHtml(ch));
-        updateTypeHint(j);
+      g_pushChannels = [];
+      for (var j = 0; j < channels.length; j++) {
+        g_pushChannels.push(channels[j]);
       }
+      if (g_pushChannels.length === 0) {
+        for (var j = 0; j < 5; j++) {
+          g_pushChannels.push({ enabled: false, type: 1, name: '', url: '', key1: '', key2: '', customBody: '' });
+        }
+      }
+      renderPushChannels();
 
       var strategy = data.pushStrategy !== undefined ? data.pushStrategy : 0;
       var radios = document.getElementsByName('pushStrategy');
@@ -386,12 +428,56 @@
     }
 
     // ---------- WiFi ----------
+    var g_wifiList = [];
+    var MAX_WIFI = 5;
+
+    function buildWifiEntryHtml(entry, idx) {
+      return '<div class="wifi-entry" id="wifiEntry' + idx + '" style="border:1px solid #e0e0e0;padding:10px;margin-bottom:10px;border-radius:5px;background:#fafafa;">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+          '<span style="font-weight:bold;font-size:13px;color:#555;">WiFi ' + (idx+1) + '</span>' +
+          (g_wifiList.length > 1 ? '<button type="button" onclick="removeWifi(' + idx + ')" style="margin-left:auto;width:auto;padding:2px 10px;margin-top:0;background:#e53935;font-size:12px;">删除</button>' : '') +
+        '</div>' +
+        '<div class="form-group">' +
+          '<label>SSID（网络名称）</label>' +
+          '<input type="text" id="wifiSsid' + idx + '" value="' + escHtml(entry.ssid) + '" placeholder="WiFi名称">' +
+        '</div>' +
+        '<div class="form-group" style="margin-bottom:0;">' +
+          '<label>密码（留空不修改）</label>' +
+          '<input type="text" id="wifiPass' + idx + '" value="" placeholder="留空则不修改密码">' +
+        '</div>' +
+      '</div>';
+    }
+
+    function renderWifiList() {
+      var container = document.getElementById('wifiList');
+      container.innerHTML = '';
+      for (var i = 0; i < g_wifiList.length; i++) {
+        container.insertAdjacentHTML('beforeend', buildWifiEntryHtml(g_wifiList[i], i));
+      }
+      document.getElementById('addWifiBtn').disabled = (g_wifiList.length >= MAX_WIFI);
+    }
+
+    function addWifi() {
+      if (g_wifiList.length >= MAX_WIFI) return;
+      for (var i = 0; i < g_wifiList.length; i++) {
+        g_wifiList[i].ssid = ((document.getElementById('wifiSsid' + i) || {}).value || '').trim();
+      }
+      g_wifiList.push({ ssid: '', password: '' });
+      renderWifiList();
+    }
+
+    function removeWifi(idx) {
+      if (g_wifiList.length <= 1) return;
+      g_wifiList.splice(idx, 1);
+      renderWifiList();
+    }
+
     function loadWifi() {
       return fetch('/api/wifi')
         .then(function(resp) { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.json(); })
         .then(function(data) {
-          document.getElementById('wifiSsid').value = data.ssid || '';
-          document.getElementById('wifiPass').value = data.password || '';
+          g_wifiList = (data.wifiList && data.wifiList.length > 0) ? data.wifiList : [{ ssid: '', password: '' }];
+          renderWifiList();
         });
     }
 
@@ -405,16 +491,17 @@
     }
 
     function saveWifi() {
-      var ssid = document.getElementById('wifiSsid').value.trim();
-      if (!ssid) { showResult('wifiResult', false, '请输入SSID'); return; }
-      var payload = { ssid: ssid };
-      var pw = document.getElementById('wifiPass').value;
-      if (pw.length > 0) payload.password = pw;
-
+      var list = [];
+      for (var i = 0; i < g_wifiList.length; i++) {
+        var ssid = ((document.getElementById('wifiSsid' + i) || {}).value || '').trim();
+        var pw   = (document.getElementById('wifiPass' + i) || {}).value || '';
+        if (ssid) list.push({ ssid: ssid, password: pw });
+      }
+      if (list.length === 0) { showResult('wifiResult', false, '请至少配置一条有效的 WiFi SSID'); return; }
       fetch('/api/wifi', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ wifiList: list })
       })
         .then(function(resp) { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.json(); })
         .then(function(d) {

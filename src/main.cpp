@@ -7,6 +7,7 @@
 #include "logger.h"
 #include "config/config.h"
 #include "sim/sim.h"
+#include "time/time_module.h"
 #include "sms/sms.h"
 #include "push/push.h"
 #include "email/email.h"
@@ -21,6 +22,9 @@ AsyncWebServer server(80);
 
 // Shared state (extern-referenced by handler_api_status.cpp)
 bool timeSynced = false;
+
+// 记录 SIM 信息是否已抓取（在 loop 中 SIM_READY 后执行一次）
+static bool s_simInfoFetched = false;
 
 // ---------- helpers ----------
 
@@ -58,6 +62,9 @@ void setup() {
   modemPowerCycle();
   while (Serial1.available()) Serial1.read();
 
+  // 时区初始化（须在 NTP/SIM 时间同步前调用）
+  timeModuleInit();
+
   initConcatBuffer();
   loadConfig();
   loadRebootSchedule(rebootSchedule);
@@ -67,17 +74,14 @@ void setup() {
   // WiFi
   wifiManagerInit();
 
-  // NTP — only in STA mode (requires internet access)
+  // 时间同步：STA 模式下优先使用 NTP；AP 模式下等 SIM 就绪后从 NITZ 同步
   if (wifiManagerGetMode() == WIFI_MODE_STA_CONNECTED) {
-    LOG("WiFi", "正在同步NTP时间...");
-    configTime(0, 0, "ntp.ntsc.ac.cn", "ntp.aliyun.com", "pool.ntp.org");
-    int ntpRetry = 0;
-    while (time(nullptr) < 100000 && ntpRetry < 100) { delay(100); ntpRetry++; }
-    if (time(nullptr) >= 100000) {
-      timeSynced = true;
+    timeModuleSyncNTP();
+    timeSynced = (time(nullptr) >= 1000000);
+    if (timeSynced) {
       LOG("WiFi", "NTP时间同步成功，UTC: %ld", (long)time(nullptr));
     } else {
-      LOG("WiFi", "NTP时间同步失败，将使用设备时间");
+      LOG("WiFi", "NTP时间同步失败，将在SIM就绪后通过NITZ同步");
     }
   } else {
     LOG("WiFi", "AP模式，跳过NTP同步。请访问 %s 配置WiFi", getDeviceUrl().c_str());
@@ -114,5 +118,15 @@ void loop() {
   if (Serial.available()) Serial1.write(Serial.read());
   checkSerial1URC();
   simTick();
+
+  // SIM 就绪后抓取运营商/号码/信号，并在 NTP 未同步时从 SIM NITZ 同步时间
+  if (!s_simInfoFetched && simGetState() == SIM_READY) {
+    s_simInfoFetched = true;
+    simFetchInfo();
+    if (!timeSynced) {
+      timeModuleSyncFromSIM();
+      timeSynced = (time(nullptr) >= 1000000);
+    }
+  }
   rebootTick();
 }

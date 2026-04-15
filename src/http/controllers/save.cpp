@@ -34,7 +34,18 @@ void saveController(AsyncWebServerRequest* request) {
     if (ps == 0 || ps == 1) config.pushStrategy = (PushStrategy)ps;
   }
 
-  for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
+  // 读取用户配置的推送通道数量，限制在有效范围内
+  int pushCount = request->hasParam("pushCount", true)
+                  ? request->getParam("pushCount", true)->value().toInt()
+                  : MAX_PUSH_CHANNELS;
+  if (pushCount < 1) pushCount = 1;
+  if (pushCount > MAX_PUSH_CHANNELS) {
+    request->send(400, "application/json", "{\"ok\":false,\"message\":\"pushCount 超过最大限制\"}");
+    return;
+  }
+  config.pushCount = pushCount;
+
+  for (int i = 0; i < pushCount; i++) {
     String idx = String(i);
     config.pushChannels[i].enabled    = request->hasParam("push" + idx + "en",   true);
     config.pushChannels[i].type       = (PushType)(request->hasParam("push" + idx + "type", true) ? request->getParam("push" + idx + "type", true)->value().toInt() : 1);
@@ -46,6 +57,10 @@ void saveController(AsyncWebServerRequest* request) {
     if (config.pushChannels[i].name.length() == 0) {
       config.pushChannels[i].name = "通道" + String(i + 1);
     }
+  }
+  // 清除用户删除的通道槽位
+  for (int i = pushCount; i < MAX_PUSH_CHANNELS; i++) {
+    config.pushChannels[i] = PushChannel{};
   }
 
   saveConfig();

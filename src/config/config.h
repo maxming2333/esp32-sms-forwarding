@@ -31,7 +31,8 @@ enum MsgType {
   MSG_TYPE_SIM  = 2
 };
 
-constexpr int MAX_PUSH_CHANNELS    = 5;
+constexpr int MAX_PUSH_CHANNELS    = 10;
+constexpr int MAX_WIFI_ENTRIES      = 5;
 constexpr int MAX_BLACKLIST_ENTRIES = 20;
 
 struct PushChannel {
@@ -44,6 +45,11 @@ struct PushChannel {
   String   customBody;
 };
 
+struct WifiEntry {
+  String ssid;
+  String password;
+};
+
 struct Config {
   String     smtpServer;
   int        smtpPort;
@@ -54,9 +60,10 @@ struct Config {
   String     webUser;
   String     webPass;
   PushChannel pushChannels[MAX_PUSH_CHANNELS];
+  int          pushCount;
   bool         simNotifyEnabled;
-  String       wifiSsid;
-  String       wifiPass;
+  WifiEntry    wifiList[MAX_WIFI_ENTRIES];
+  int          wifiCount;
   String       blacklist[MAX_BLACKLIST_ENTRIES];
   int          blacklistCount;
   PushStrategy pushStrategy;

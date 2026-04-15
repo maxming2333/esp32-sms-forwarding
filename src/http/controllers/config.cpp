@@ -20,6 +20,7 @@ void configController(AsyncWebServerRequest* request) {
   root["simNotifyEnabled"] = config.simNotifyEnabled;
 
   root["pushStrategy"] = (int)config.pushStrategy;
+  root["pushCount"]    = config.pushCount;
 
   root["rbEnabled"]   = rebootSchedule.enabled;
   root["rbMode"]      = (int)rebootSchedule.mode;
@@ -28,7 +29,7 @@ void configController(AsyncWebServerRequest* request) {
   root["rbIntervalH"] = (int)rebootSchedule.intervalH;
 
   JsonArray channels = root["pushChannels"].to<JsonArray>();
-  for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
+  for (int i = 0; i < config.pushCount; i++) {
     JsonObject ch = channels.add<JsonObject>();
     ch["index"]      = i;
     ch["enabled"]    = config.pushChannels[i].enabled;
@@ -38,6 +39,13 @@ void configController(AsyncWebServerRequest* request) {
     ch["key1"]       = config.pushChannels[i].key1;
     ch["key2"]       = config.pushChannels[i].key2;
     ch["customBody"] = config.pushChannels[i].customBody;
+  }
+
+  JsonArray wifiArr = root["wifiList"].to<JsonArray>();
+  for (int i = 0; i < config.wifiCount; i++) {
+    JsonObject we = wifiArr.add<JsonObject>();
+    we["ssid"]     = config.wifiList[i].ssid;
+    we["password"] = "";  // 安全起见，密码不回显
   }
 
   resp->setLength();
@@ -65,14 +73,17 @@ void configExportController(AsyncWebServerRequest* request) {
   general["simNotifyEnabled"] = config.simNotifyEnabled;
   general["pushStrategy"]     = (int)config.pushStrategy;
 
-  // wifi 节
-  JsonObject wifi = doc["wifi"].to<JsonObject>();
-  wifi["ssid"]    = config.wifiSsid;
-  wifi["pass"]    = config.wifiPass;
+  // wifiList 数组（含密码，用于导出还原）
+  JsonArray wifiArr = doc["wifiList"].to<JsonArray>();
+  for (int i = 0; i < config.wifiCount; i++) {
+    JsonObject we = wifiArr.add<JsonObject>();
+    we["ssid"] = config.wifiList[i].ssid;
+    we["pass"] = config.wifiList[i].password;
+  }
 
-  // pushChannels 数组
+  // pushChannels 数组（仅导出 pushCount 个）
   JsonArray channels = doc["pushChannels"].to<JsonArray>();
-  for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
+  for (int i = 0; i < config.pushCount; i++) {
     JsonObject ch    = channels.add<JsonObject>();
     ch["enabled"]    = config.pushChannels[i].enabled;
     ch["type"]       = (int)config.pushChannels[i].type;
@@ -160,8 +171,12 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
       config.webUser          = s["webUser"]       | config.webUser;
       config.webPass          = s["webPass"]       | config.webPass;
       config.simNotifyEnabled = s["simNotify"]     | config.simNotifyEnabled;
-      config.wifiSsid         = s["wifiSsid"]      | config.wifiSsid;
-      config.wifiPass         = s["wifiPass"]      | config.wifiPass;
+      // 旧格式：wifiSsid/wifiPass → wifiList[0] 迁移
+      if (s["wifiSsid"].is<const char*>()) {
+        config.wifiList[0].ssid     = s["wifiSsid"].as<String>();
+        config.wifiList[0].password = s["wifiPass"] | String("");
+        config.wifiCount = 1;
+      }
       config.pushStrategy     = (PushStrategy)(s["pushStrategy"] | (int)config.pushStrategy);
       for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
         String prefix = "push" + String(i);
@@ -202,6 +217,7 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
   bool hasRecognized = doc["smtp"].is<JsonObject>()
                     || doc["general"].is<JsonObject>()
                     || doc["wifi"].is<JsonObject>()
+                    || doc["wifiList"].is<JsonArray>()
                     || doc["pushChannels"].is<JsonArray>()
                     || doc["blacklist"].is<JsonArray>()
                     || doc["reboot"].is<JsonObject>();
@@ -229,26 +245,61 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
     config.pushStrategy     = (PushStrategy)(g["pushStrategy"] | (int)config.pushStrategy);
   }
 
-  if (doc["wifi"].is<JsonObject>()) {
-    JsonObject w    = doc["wifi"].as<JsonObject>();
-    config.wifiSsid = w["ssid"] | config.wifiSsid;
-    config.wifiPass = w["pass"] | config.wifiPass;
+  // 新格式：wifiList 数组；向后兼容旧 wifi 单对象 → wifiList[0]
+  if (doc["wifiList"].is<JsonArray>()) {
+    JsonArray wArr = doc["wifiList"].as<JsonArray>();
+    if ((int)wArr.size() > MAX_WIFI_ENTRIES) {
+      request->send(400, "application/json",
+        "{\"ok\":false,\"error\":\"wifiList 超过最大限制（5条）\"}");
+      return;
+    }
+    int wCount = 0;
+    for (JsonVariant v : wArr) {
+      if (!v.is<JsonObject>()) continue;
+      JsonObject we = v.as<JsonObject>();
+      String ssid = we["ssid"] | String("");
+      if (ssid.length() == 0) continue;
+      config.wifiList[wCount].ssid     = ssid;
+      config.wifiList[wCount].password = we["pass"] | we["password"] | String("");
+      wCount++;
+    }
+    config.wifiCount = wCount;
+  } else if (doc["wifi"].is<JsonObject>()) {
+    // 向后兼容：旧格式 wifi 单对象 → wifiList[0]
+    JsonObject w = doc["wifi"].as<JsonObject>();
+    String ssid  = w["ssid"] | String("");
+    if (ssid.length() > 0) {
+      config.wifiList[0].ssid     = ssid;
+      config.wifiList[0].password = w["pass"] | String("");
+      config.wifiCount = 1;
+    }
   }
 
   if (doc["pushChannels"].is<JsonArray>()) {
     JsonArray arr = doc["pushChannels"].as<JsonArray>();
+    if ((int)arr.size() > MAX_PUSH_CHANNELS) {
+      request->send(400, "application/json",
+        "{\"ok\":false,\"error\":\"pushChannels 超过最大限制（10条）\"}");
+      return;
+    }
     int i = 0;
     for (JsonObject ch : arr) {
       if (i >= MAX_PUSH_CHANNELS) break;
-      config.pushChannels[i].enabled    = ch["enabled"]    | config.pushChannels[i].enabled;
-      config.pushChannels[i].type       = (PushType)(ch["type"] | (int)config.pushChannels[i].type);
-      config.pushChannels[i].name       = ch["name"]       | config.pushChannels[i].name;
-      config.pushChannels[i].url        = ch["url"]        | config.pushChannels[i].url;
-      config.pushChannels[i].key1       = ch["key1"]       | config.pushChannels[i].key1;
-      config.pushChannels[i].key2       = ch["key2"]       | config.pushChannels[i].key2;
-      config.pushChannels[i].customBody = ch["customBody"] | config.pushChannels[i].customBody;
+      config.pushChannels[i].enabled = ch["enabled"] | config.pushChannels[i].enabled;
+      config.pushChannels[i].type    = (PushType)(ch["type"] | (int)config.pushChannels[i].type);
+      config.pushChannels[i].name    = ch["name"]    | config.pushChannels[i].name;
+      config.pushChannels[i].url     = ch["url"]     | config.pushChannels[i].url;
+      config.pushChannels[i].key1    = ch["key1"]    | config.pushChannels[i].key1;
+      config.pushChannels[i].key2    = ch["key2"]    | config.pushChannels[i].key2;
+      // FR-021: 向后兼容 customFormat → customBody 映射
+      if (ch["customBody"].is<const char*>()) {
+        config.pushChannels[i].customBody = ch["customBody"].as<String>();
+      } else if (ch["customFormat"].is<const char*>()) {
+        config.pushChannels[i].customBody = ch["customFormat"].as<String>();
+      }
       i++;
     }
+    config.pushCount = i;
   }
 
   if (doc["blacklist"].is<JsonArray>()) {

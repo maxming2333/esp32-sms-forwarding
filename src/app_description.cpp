@@ -11,7 +11,7 @@ esp_app_desc_t esp_app_desc = {
     /* secure_version */ 0,
     /* reserv1        */ {0, 0},
     /* version        */ APP_VERSION,
-    /* project_name   */ "sms_forwarding by keroming",
+    /* project_name   */ "sms-forwarding by keroming",
     /* time           */ APP_BUILD_TIME,
     /* date           */ APP_BUILD_DATE,
     /* idf_ver        */ IDF_VER,

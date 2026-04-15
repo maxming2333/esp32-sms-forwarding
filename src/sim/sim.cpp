@@ -8,6 +8,11 @@
 static SimState s_state      = SIM_UNKNOWN;
 static bool     s_needReinit = false;
 
+// SIM info cache (populated after SIM_READY)
+static String   s_carrier    = "未知";
+static String   s_phoneNum   = "未知";
+static String   s_signal     = "未知";
+
 // ---------- T005: AT helpers ----------
 
 static bool sendATandWaitOK(const char* cmd, unsigned long timeout) {
@@ -166,3 +171,81 @@ void simTick() {
     LOG("SIM", "热插入初始化失败");
   }
 }
+
+// ---------- SIM info cache fetch (called after SIM_READY) ----------
+
+static String sendATandRead(const char* cmd, unsigned long timeout) {
+  while (Serial1.available()) Serial1.read();
+  Serial1.println(cmd);
+  unsigned long start = millis();
+  String resp;
+  while (millis() - start < timeout) {
+    while (Serial1.available()) {
+      char c = Serial1.read(); resp += c;
+    }
+    if (resp.indexOf("OK") >= 0 || resp.indexOf("ERROR") >= 0) break;
+  }
+  return resp;
+}
+
+void simFetchInfo() {
+  // AT+COPS? → +COPS: 0,0,"中国移动",7
+  {
+    String resp = sendATandRead("AT+COPS?", 3000);
+    int start = resp.indexOf("+COPS:");
+    if (start >= 0) {
+      int q1 = resp.indexOf('"', start);
+      int q2 = (q1 >= 0) ? resp.indexOf('"', q1 + 1) : -1;
+      if (q1 >= 0 && q2 > q1) {
+        s_carrier = resp.substring(q1 + 1, q2);
+        LOG("SIM", "运营商: %s", s_carrier.c_str());
+      }
+    }
+  }
+
+  // AT+CNUM → +CNUM: "","13900001234",129
+  {
+    String resp = sendATandRead("AT+CNUM", 3000);
+    int start = resp.indexOf("+CNUM:");
+    if (start >= 0) {
+      // 找第二对引号（第一对是 alpha 名称，可为空）
+      int q1 = resp.indexOf('"', start);
+      int q2 = (q1 >= 0) ? resp.indexOf('"', q1 + 1) : -1;
+      int q3 = (q2 >= 0) ? resp.indexOf('"', q2 + 1) : -1;
+      int q4 = (q3 >= 0) ? resp.indexOf('"', q3 + 1) : -1;
+      if (q3 >= 0 && q4 > q3) {
+        String num = resp.substring(q3 + 1, q4);
+        if (num.length() > 0) {
+          s_phoneNum = num;
+          LOG("SIM", "本机号码: %s", s_phoneNum.c_str());
+        }
+      }
+    }
+  }
+
+  // AT+CSQ → +CSQ: 20,0  (CSQ 99 = unknown)
+  {
+    String resp = sendATandRead("AT+CSQ", 2000);
+    int start = resp.indexOf("+CSQ:");
+    if (start >= 0) {
+      int csq = -1;
+      sscanf(resp.c_str() + start + 5, " %d", &csq);
+      if (csq >= 0 && csq != 99) {
+        // dBm ≈ -113 + 2*csq
+        int dbm = -113 + 2 * csq;
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%d (%ddBm)", csq, dbm);
+        s_signal = String(buf);
+        LOG("SIM", "信号强度: %s", s_signal.c_str());
+      } else {
+        s_signal = "未知";
+      }
+    }
+  }
+}
+
+// ---------- Getter functions ----------
+
+String simGetCarrier()     { return s_carrier; }
+String simGetPhoneNumber() { return s_phoneNum; }
+String simGetSignal()      { return s_signal; }
