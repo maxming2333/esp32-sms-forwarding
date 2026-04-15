@@ -49,8 +49,7 @@ void wifiPostController(AsyncWebServerRequest* request, uint8_t* data, size_t le
   saveConfig();
   LOG("HTTP", "WiFi配置已更新，共 %d 条", config.wifiCount);
 
-  request->send(200, "application/json",
-    "{\"ok\":true,\"reboot\":true,\"message\":\"WiFi配置已保存，设备即将重启\"}");
-  delay(500);
+  request->send(200, "application/json", "{\"ok\":true,\"message\":\"WiFi配置已保存，设备将在2秒后自动重启\"}");
+  delay(2000);
   ESP.restart();
 }

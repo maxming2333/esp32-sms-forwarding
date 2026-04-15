@@ -223,7 +223,7 @@ static void processAdminCommand(const char* sender, const char* text) {
     }
   } else if (cmd.equals("RESET")) {
     sendEmailNotification("重启命令已执行", "收到RESET命令，即将重启ESP32...");
-    delay(1000);
+    delay(2000);
     ESP.restart();
   } else {
     LOG("SMS", "未知命令: %s", cmd.c_str());

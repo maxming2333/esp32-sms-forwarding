@@ -12,6 +12,11 @@ static void enterAPMode() {
 }
 
 void wifiManagerInit() {
+  // 软重启（ESP.restart）后 WiFi 驱动状态可能残留，强制关闭后再初始化
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+
   if (config.wifiCount == 0) {
     LOG("WiFi", "未配置任何WiFi，直接进入AP模式");
     enterAPMode();

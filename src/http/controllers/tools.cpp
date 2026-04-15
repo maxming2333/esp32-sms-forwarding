@@ -358,8 +358,7 @@ void resetConfigController(AsyncWebServerRequest* request, uint8_t* data,
   g_resetToken = "";
   resetConfig();
 
-  request->send(200, "application/json",
-    "{\"ok\":true,\"message\":\"配置已重置，设备将在2秒后自动重启\"}");
+  request->send(200, "application/json", "{\"ok\":true,\"message\":\"配置已重置，设备将在2秒后自动重启\"}");
   delay(2000);
   ESP.restart();
 }

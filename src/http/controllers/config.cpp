@@ -328,7 +328,7 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
   saveConfig();
   saveRebootSchedule(rebootSchedule);
 
-  request->send(200, "application/json", "{\"ok\":true,\"message\":\"配置导入成功，设备即将重启\"}");
+  request->send(200, "application/json", "{\"ok\":true,\"message\":\"配置导入成功，设备将在2秒后自动重启\"}");
   delay(2000);
   ESP.restart();
 }
