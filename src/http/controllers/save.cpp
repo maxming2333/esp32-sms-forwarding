@@ -16,13 +16,16 @@ void saveController(AsyncWebServerRequest* request) {
   String newWebPass = request->hasParam("webPass", true) ? request->getParam("webPass", true)->value() : "";
 
   if (newWebUser.length() == 0) newWebUser = DEFAULT_WEB_USER;
-  if (newWebPass.length() == 0) newWebPass = DEFAULT_WEB_PASS;
 
   config.webUser    = newWebUser;
-  config.webPass    = newWebPass;
+  if (newWebPass.length() > 0) {
+    config.webPass  = newWebPass;
+  }
   config.smtpServer = request->hasParam("smtpServer", true) ? request->getParam("smtpServer", true)->value() : "";
   config.smtpPort   = request->hasParam("smtpPort",   true) ? request->getParam("smtpPort",   true)->value().toInt() : 465;
-  if (config.smtpPort == 0) config.smtpPort = 465;
+  if (config.smtpPort == 0) {
+    config.smtpPort = 465;
+  }
   config.smtpUser   = request->hasParam("smtpUser",   true) ? request->getParam("smtpUser",   true)->value() : "";
   config.smtpPass   = request->hasParam("smtpPass",   true) ? request->getParam("smtpPass",   true)->value() : "";
   config.smtpSendTo = request->hasParam("smtpSendTo", true) ? request->getParam("smtpSendTo", true)->value() : "";
