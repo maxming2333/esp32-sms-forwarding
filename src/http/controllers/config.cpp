@@ -18,6 +18,7 @@ void configController(AsyncWebServerRequest* request) {
   // smtpPass and webPass are NEVER included (OWASP A02)
 
   root["simNotifyEnabled"] = config.simNotifyEnabled;
+  root["dataTraffic"]      = config.dataTraffic;
 
   root["pushStrategy"] = (int)config.pushStrategy;
   root["pushCount"]    = config.pushCount;
@@ -71,6 +72,7 @@ void configExportController(AsyncWebServerRequest* request) {
   general["webUser"]          = config.webUser;
   general["webPass"]          = config.webPass;
   general["simNotifyEnabled"] = config.simNotifyEnabled;
+  general["dataTraffic"]      = config.dataTraffic;
   general["pushStrategy"]     = (int)config.pushStrategy;
 
   // wifiList 数组（含密码，用于导出还原）
@@ -171,6 +173,7 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
       config.webUser          = s["webUser"]       | config.webUser;
       config.webPass          = s["webPass"]       | config.webPass;
       config.simNotifyEnabled = s["simNotify"]     | config.simNotifyEnabled;
+      config.dataTraffic       = s["dataTraffic"]   | config.dataTraffic;
       // 旧格式：wifiSsid/wifiPass → wifiList[0] 迁移
       if (s["wifiSsid"].is<const char*>()) {
         config.wifiList[0].ssid     = s["wifiSsid"].as<String>();
@@ -242,6 +245,7 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
     config.webUser          = g["webUser"]          | config.webUser;
     config.webPass          = g["webPass"]          | config.webPass;
     config.simNotifyEnabled = g["simNotifyEnabled"] | config.simNotifyEnabled;
+    config.dataTraffic       = g["dataTraffic"]      | config.dataTraffic;
     config.pushStrategy     = (PushStrategy)(g["pushStrategy"] | (int)config.pushStrategy);
   }
 
@@ -324,7 +328,8 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
   saveConfig();
   saveRebootSchedule(rebootSchedule);
 
-  request->send(200, "application/json",
-    "{\"ok\":true,\"message\":\"配置导入成功，请重启设备以生效\"}");
+  request->send(200, "application/json", "{\"ok\":true,\"message\":\"配置导入成功，设备即将重启\"}");
+  delay(2000);
+  ESP.restart();
 }
 

@@ -48,6 +48,7 @@ void loadConfig() {
   }
 
   config.simNotifyEnabled = preferences.isKey("simNotify") ? preferences.getBool("simNotify", false) : false;
+  config.dataTraffic       = preferences.getBool("dataTraffic", false);
 
   // Multi-WiFi: 读取 wifiCount，如不存在则迁移旧单 WiFi 键（FR-017）
   if (preferences.isKey("wifiCount")) {
@@ -110,7 +111,8 @@ void saveConfig() {
     preferences.putString((prefix + "body").c_str(), config.pushChannels[i].customBody);
   }
 
-  preferences.putBool("simNotify", config.simNotifyEnabled);
+  preferences.putBool("simNotify",    config.simNotifyEnabled);
+  preferences.putBool("dataTraffic",  config.dataTraffic);
 
   preferences.putUChar("wifiCount", (uint8_t)config.wifiCount);
   for (int i = 0; i < config.wifiCount; i++) {

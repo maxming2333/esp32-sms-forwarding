@@ -62,6 +62,7 @@ struct Config {
   PushChannel pushChannels[MAX_PUSH_CHANNELS];
   int          pushCount;
   bool         simNotifyEnabled;
+  bool         dataTraffic;
   WifiEntry    wifiList[MAX_WIFI_ENTRIES];
   int          wifiCount;
   String       blacklist[MAX_BLACKLIST_ENTRIES];

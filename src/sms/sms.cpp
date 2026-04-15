@@ -145,14 +145,25 @@ static bool phoneMatchesBlacklist(const String& incoming);
 
 // ---------- blacklist helpers ----------
 
+// 从本机号码中提取区号（如 "86"），用于对短号码进行区号补齐比对。
+// 若本机号码未知或长度不足以推断区号，返回空字符串。
+static String extractAreaCode() {
+  String phone = simGetPhoneNumber();
+  if (phone.length() == 0 || phone.equals("未知")) return "";
+  if (phone.startsWith("+")) phone = phone.substring(1);
+  if (phone.startsWith("00")) phone = phone.substring(2);
+  if ((int)phone.length() <= 11) return "";
+  return phone.substring(0, phone.length() - 11);
+}
+
 static String normalizePhone(const String& raw) {
   String s = raw;
   s.trim();
-  // Remove leading '+'
   if (s.startsWith("+")) s = s.substring(1);
-  // Strip country code prefix until length <= 11
-  while (s.length() > 11) {
-    s = s.substring(1);
+  if (s.startsWith("00")) s = s.substring(2);
+  String areaCode = extractAreaCode();
+  if (areaCode.length() > 0 && (int)s.length() <= 11) {
+    s = areaCode + s;
   }
   return s;
 }

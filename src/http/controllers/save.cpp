@@ -28,6 +28,7 @@ void saveController(AsyncWebServerRequest* request) {
   config.smtpSendTo = request->hasParam("smtpSendTo", true) ? request->getParam("smtpSendTo", true)->value() : "";
   config.adminPhone = request->hasParam("adminPhone", true) ? request->getParam("adminPhone", true)->value() : "";
   config.simNotifyEnabled = request->hasParam("simNotifyEnabled", true);
+  config.dataTraffic       = request->hasParam("dataTraffic",      true);
 
   if (request->hasParam("pushStrategy", true)) {
     int ps = request->getParam("pushStrategy", true)->value().toInt();

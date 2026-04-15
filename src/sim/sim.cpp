@@ -13,6 +13,26 @@ static String   s_carrier    = "未知";
 static String   s_phoneNum   = "未知";
 static String   s_signal     = "未知";
 
+// ---------- US2: 数据流量非阻塞状态机 ----------
+
+enum TrafficState {
+  TS_IDLE,
+  TS_PENDING,
+  TS_WAIT_RESP,
+  TS_WAIT_RETRY,
+  TS_DONE,
+  TS_TIMED_OUT
+};
+
+struct TrafficSM {
+  TrafficState  state       = TS_IDLE;
+  unsigned long triggerMs   = 0;
+  unsigned long lastActionMs = 0;
+  String        respBuf     = "";
+};
+
+static TrafficSM s_tsm;
+
 // ---------- T005: AT helpers ----------
 
 static bool sendATandWaitOK(const char* cmd, unsigned long timeout) {
@@ -42,6 +62,60 @@ static bool runInitStep(const char* cmd, unsigned long timeout, int maxRetry, co
   return false;
 }
 
+// ---------- US2: simTrafficTick — 非阻塞数据流量状态机 ----------
+
+static void simTrafficTick() {
+  switch (s_tsm.state) {
+    case TS_PENDING: {
+      String cmd = "AT+CGACT=";
+      cmd += config.dataTraffic ? "1" : "0";
+      cmd += ",1";
+      while (Serial1.available()) Serial1.read();
+      Serial1.println(cmd);
+      s_tsm.respBuf      = "";
+      s_tsm.lastActionMs = millis();
+      s_tsm.state        = TS_WAIT_RESP;
+      LOG("SIM", "数据流量: 发送 %s", cmd.c_str());
+      break;
+    }
+    case TS_WAIT_RESP: {
+      while (Serial1.available()) {
+        char c = Serial1.read();
+        s_tsm.respBuf += c;
+      }
+      if (s_tsm.respBuf.indexOf("OK") >= 0) {
+        LOG("SIM", "数据流量: AT+CGACT 成功");
+        s_tsm.state = TS_DONE;
+      } else if (s_tsm.respBuf.indexOf("ERROR") >= 0 || millis() - s_tsm.lastActionMs > 6000) {
+        LOG("SIM", "数据流量: AT+CGACT 失败或超时，3s 后重试");
+        s_tsm.respBuf      = "";
+        s_tsm.lastActionMs = millis();
+        s_tsm.state        = TS_WAIT_RETRY;
+      }
+      if (millis() - s_tsm.triggerMs > 300000) {
+        LOG("SIM", "数据流量: 总超时 5 分钟，放弃重试");
+        s_tsm.state = TS_TIMED_OUT;
+      }
+      break;
+    }
+    case TS_WAIT_RETRY: {
+      if (millis() - s_tsm.triggerMs > 300000) {
+        LOG("SIM", "数据流量: 总超时 5 分钟，放弃重试");
+        s_tsm.state = TS_TIMED_OUT;
+      } else if (millis() - s_tsm.lastActionMs >= 3000) {
+        s_tsm.respBuf = "";
+        s_tsm.state   = TS_PENDING;
+      }
+      break;
+    }
+    case TS_IDLE:
+    case TS_DONE:
+    case TS_TIMED_OUT:
+    default:
+      break;
+  }
+}
+
 // ---------- T006 helper: CEREG polling ----------
 
 static bool waitCEREG() {
@@ -65,7 +139,6 @@ static bool runInitSequence() {
   if (!runInitStep("AT+CNMI=2,2,0,0,0", 1000, 3, "CNMI")) return false;
   if (!runInitStep("AT+CMGF=0", 1000, 3, "CMGF")) return false;
 
-  runInitStep("AT+CGACT=0,1", 5000, 3, "CGACT");  // 关闭数据连接，失败不阻断初始化
   runInitStep("AT+CLIP=1", 1000, 3, "CLIP");  // 启用主叫号码上报，失败不阻断初始化
 
   // 轮询 CEREG，最多 30 次 × 2s = 60s
@@ -111,7 +184,11 @@ void simInit() {
   s_state = SIM_INITIALIZING;
 
   if (runInitSequence()) {
-    s_state = SIM_READY;
+    s_state            = SIM_READY;
+    s_tsm.state        = TS_PENDING;
+    s_tsm.triggerMs    = millis();
+    s_tsm.lastActionMs = millis();
+    s_tsm.respBuf      = "";
     LOG("SIM", "SIM 初始化成功");
   } else {
     s_state = SIM_INIT_FAILED;
@@ -145,6 +222,8 @@ void simHandleURC(const String& line) {
     SimState prev = s_state;
     s_state      = SIM_NOT_INSERTED;
     s_needReinit = false;
+    s_phoneNum   = "";
+    s_tsm        = TrafficSM{};
     LOG("SIM", "SIM 卡已拔出，状态已清除");
 
     // T028: SIM 事件通知（拔出）
@@ -158,18 +237,25 @@ void simHandleURC(const String& line) {
 // ---------- T010: simTick ----------
 
 void simTick() {
-  if (!s_needReinit) return;
-  s_needReinit = false;
-  s_state      = SIM_INITIALIZING;
-  LOG("SIM", "开始热插入重新初始化");
+  if (s_needReinit) {
+    s_needReinit = false;
+    s_state      = SIM_INITIALIZING;
+    LOG("SIM", "开始热插入重新初始化");
 
-  if (runInitSequence()) {
-    s_state = SIM_READY;
-    LOG("SIM", "热插入初始化成功");
-  } else {
-    s_state = SIM_INIT_FAILED;
-    LOG("SIM", "热插入初始化失败");
+    if (runInitSequence()) {
+      s_state            = SIM_READY;
+      s_tsm.state        = TS_PENDING;
+      s_tsm.triggerMs    = millis();
+      s_tsm.lastActionMs = millis();
+      s_tsm.respBuf      = "";
+      LOG("SIM", "热插入初始化成功");
+    } else {
+      s_state = SIM_INIT_FAILED;
+      LOG("SIM", "热插入初始化失败");
+    }
   }
+
+  simTrafficTick();
 }
 
 // ---------- SIM info cache fetch (called after SIM_READY) ----------

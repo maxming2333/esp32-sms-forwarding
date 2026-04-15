@@ -122,6 +122,12 @@
               SIM 事件通知（SIM 卡插入/拔出时发送邮件通知）
             </label>
           </div>
+          <div class="form-group">
+            <label>
+              <input type="checkbox" name="dataTraffic" id="dataTrafficEnabled">
+              数据流量（SIM 卡就绪后自动激活/关闭数据连接，开启则发送 AT+CGACT=1,1，关闭则发送 AT+CGACT=0,1）
+            </label>
+          </div>
         </div>
 
         <button type="submit" id="saveBtn">💾 保存配置</button>
@@ -370,6 +376,7 @@
       document.getElementById('smtpSendTo').value = data.smtpSendTo || '';
       document.getElementById('adminPhone').value = data.adminPhone  || '';
       document.getElementById('simNotifyEnabled').checked = !!data.simNotifyEnabled;
+      document.getElementById('dataTrafficEnabled').checked = !!data.dataTraffic;
 
       var channels = data.pushChannels || [];
       g_pushChannels = [];
