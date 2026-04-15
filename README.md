@@ -123,8 +123,9 @@ ESP32-C3 与 ML307R/C/A 通过串口（UART）连接，接线如下：
 
 1. 从 [GitHub Releases](https://github.com/maxming2333/esp32-sms-forwarding/releases/latest) 下载最新版固件压缩包，解压获得 `full.bin`
 2. 使用 Chrome 或 Edge 浏览器（88+）打开 [ESPConnect](https://thelastoutpostworkshop.github.io/ESPConnect/)
-3. 点击「连接」，在浏览器弹窗中选择 "USB JTAG/serial debug unit" 设备（波特率保持默认 921600）
-4. 进入「闪存工具」→「烧录固件」，上传 `full.bin` 即可完成全量烧录
+3. 波特率选择 `460800`
+4. 点击「连接」，在浏览器弹窗中选择 "USB JTAG/serial debug unit" 设备
+5. 进入「闪存工具」→「烧录固件」，上传 `full.bin` 即可完成全量烧录
 
 ### 方式二：命令行烧录（进阶）
 
@@ -132,10 +133,10 @@ ESP32-C3 与 ML307R/C/A 通过串口（UART）连接，接线如下：
 pip install "esptool>=4.8"
 
 # 全量烧录（推荐，地址 0x0）
-esptool --chip esp32c3 --baud 921600 write_flash 0x0 full.bin
+esptool --chip esp32c3 --baud 460800 write_flash 0x0 full.bin
 
 # 单独更新 Web UI 文件系统（地址 0x290000）
-esptool --chip esp32c3 --baud 921600 write_flash 0x290000 littlefs.bin
+esptool --chip esp32c3 --baud 460800 write_flash 0x290000 littlefs.bin
 ```
 
 ### 固件文件说明
