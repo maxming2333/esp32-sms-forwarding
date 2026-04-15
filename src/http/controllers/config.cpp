@@ -216,8 +216,11 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
     saveConfig();
     saveRebootSchedule(rebootSchedule);
     request->send(200, "application/json", "{\"ok\":true,\"message\":\"配置导入成功，设备将在2秒后自动重启\"}");
-    delay(2000);
-    ESP.restart();
+    xTaskCreate([](void*) {
+      vTaskDelay(pdMS_TO_TICKS(2000));
+      ESP.restart();
+      vTaskDelete(nullptr);
+    }, "restart", 2048, nullptr, 1, nullptr);
     return;
   }
 
@@ -331,7 +334,10 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
   saveRebootSchedule(rebootSchedule);
 
   request->send(200, "application/json", "{\"ok\":true,\"message\":\"配置导入成功，设备将在2秒后自动重启\"}");
-  delay(2000);
-  ESP.restart();
+  xTaskCreate([](void*) {
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    ESP.restart();
+    vTaskDelete(nullptr);
+  }, "restart", 2048, nullptr, 1, nullptr);
 }
 
