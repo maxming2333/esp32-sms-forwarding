@@ -160,7 +160,7 @@ void rebootTick() {
   if (rebootSchedule.mode == 1) {
     // 按间隔模式：millis() / 3600000 >= intervalH
     if ((millis() / 3600000UL) >= rebootSchedule.intervalH) {
-      LOG("SYS", "定时重启触发（间隔模式）");
+      LOG("Config", "定时重启触发（间隔模式）");
       ESP.restart();
     }
   } else {
@@ -171,18 +171,40 @@ void rebootTick() {
       static unsigned long lastWarn = 0;
       if (millis() - lastWarn >= 60000) {
         lastWarn = millis();
-        LOG("SYS", "定时重启：NTP未同步，跳过检查");
+        LOG("Config", "定时重启：NTP未同步，跳过检查");
       }
       return;
     }
+
+    // 从 NVS 加载上次重启的 epoch（仅首次调用时读取，避免重启后 static 变量丢失）
+    static uint32_t lastRebootEpoch = 0;
+    static bool lastRebootLoaded = false;
+    if (!lastRebootLoaded) {
+      Preferences p;
+      p.begin("reboot_cfg", true);
+      lastRebootEpoch = p.getUInt("rb_last_epoch", 0);
+      p.end();
+      lastRebootLoaded = true;
+    }
+
     struct tm t;
     localtime_r(&now, &t);
-    static int lastCheckedMinute = -1;
-    int curMinute = t.tm_hour * 60 + t.tm_min;
-    int targetMinute = (int)rebootSchedule.hour * 60 + (int)rebootSchedule.minute;
-    if (curMinute == targetMinute && t.tm_min != lastCheckedMinute) {
-      lastCheckedMinute = t.tm_min;
-      LOG("SYS", "定时重启触发（每日模式）");
+
+    // 计算今天目标时刻的 epoch
+    struct tm trigger = t;
+    trigger.tm_hour = rebootSchedule.hour;
+    trigger.tm_min  = rebootSchedule.minute;
+    trigger.tm_sec  = 0;
+    time_t triggerEpoch = mktime(&trigger);
+
+    // 当前时间在目标分钟窗口内，且本次触发窗口尚未重启过
+    if (now >= triggerEpoch && now < triggerEpoch + 60 && lastRebootEpoch < (uint32_t)triggerEpoch) {
+      // 重启前先持久化，防止重启后重复触发
+      Preferences p;
+      p.begin("reboot_cfg", false);
+      p.putUInt("rb_last_epoch", (uint32_t)now);
+      p.end();
+      LOG("Config", "定时重启触发（每日模式）");
       ESP.restart();
     }
   }
