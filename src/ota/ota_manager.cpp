@@ -19,7 +19,7 @@ static TaskHandle_t            g_taskHandle = nullptr;
 
 // ── otaInit ──────────────────────────────────────────────────────
 void otaInit() {
-    const esp_app_desc_t* d = esp_app_get_description();
+    const esp_app_desc_t* d = esp_ota_get_app_description();
     g_currentVer = String(d->version);
     g_state      = OtaState::IDLE;
     g_progress   = 0;
