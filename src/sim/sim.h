@@ -15,10 +15,16 @@ SimState simGetState();
 void simHandleURC(const String& line);
 void simTick();
 
-// SIM 就绪后，查询并缓存运营商/本机号码/信号强度（由 main.cpp 调用）
+// SIM 就绪后，查询并缓存运营商/信号强度（由 main.cpp 调用）
 void simFetchInfo();
 
 // 以下 getter 返回缓存值，若未就绪则返回"未知"
 String simGetCarrier();
-String simGetPhoneNumber();
 String simGetSignal();
+
+/**
+ * @brief 注册 URC 回调后启动 SIM reader task。
+ *        在 setup() 末尾所有模块初始化完成后调用。
+ *        注意：simQueryPhoneNumber() 声明位于 sim/sim_dispatcher.h。
+ */
+void simStartReaderTask();

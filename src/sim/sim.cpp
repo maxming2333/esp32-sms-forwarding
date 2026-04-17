@@ -1,4 +1,7 @@
 #include "sim.h"
+#include "sim_dispatcher.h"
+#include "call/call.h"
+#include "sms/sms.h"
 #include "logger.h"
 #include "config/config.h"
 #include "email/email.h"
@@ -10,15 +13,13 @@ static bool     s_needReinit = false;
 
 // SIM info cache (populated after SIM_READY)
 static String   s_carrier    = "未知";
-static String   s_phoneNum   = "未知";
 static String   s_signal     = "未知";
 
-// ---------- US2: 数据流量非阻塞状态机 ----------
+// ---------- US2: 数据流量状态机 ----------
 
 enum TrafficState {
   TS_IDLE,
   TS_PENDING,
-  TS_WAIT_RESP,
   TS_WAIT_RETRY,
   TS_DONE,
   TS_TIMED_OUT
@@ -28,7 +29,6 @@ struct TrafficSM {
   TrafficState  state       = TS_IDLE;
   unsigned long triggerMs   = 0;
   unsigned long lastActionMs = 0;
-  String        respBuf     = "";
 };
 
 static TrafficSM s_tsm;
@@ -62,39 +62,29 @@ static bool runInitStep(const char* cmd, unsigned long timeout, int maxRetry, co
   return false;
 }
 
-// ---------- US2: simTrafficTick — 非阻塞数据流量状态机 ----------
+// ---------- US2: simTrafficTick — 数据流量控制（通过调度器发送 AT 指令）----------
 
 static void simTrafficTick() {
   switch (s_tsm.state) {
     case TS_PENDING: {
-      String cmd = "AT+CGACT=";
-      cmd += config.dataTraffic ? "1" : "0";
-      cmd += ",1";
-      while (Serial1.available()) Serial1.read();
-      Serial1.println(cmd);
-      s_tsm.respBuf      = "";
-      s_tsm.lastActionMs = millis();
-      s_tsm.state        = TS_WAIT_RESP;
-      LOG("SIM", "数据流量: 发送 %s", cmd.c_str());
-      break;
-    }
-    case TS_WAIT_RESP: {
-      while (Serial1.available()) {
-        char c = Serial1.read();
-        s_tsm.respBuf += c;
-      }
-      if (s_tsm.respBuf.indexOf("OK") >= 0) {
-        LOG("SIM", "数据流量: AT+CGACT 成功");
-        s_tsm.state = TS_DONE;
-      } else if (s_tsm.respBuf.indexOf("ERROR") >= 0 || millis() - s_tsm.lastActionMs > 6000) {
-        LOG("SIM", "数据流量: AT+CGACT 失败或超时，3s 后重试");
-        s_tsm.respBuf      = "";
-        s_tsm.lastActionMs = millis();
-        s_tsm.state        = TS_WAIT_RETRY;
-      }
+      // 检查总超时
       if (millis() - s_tsm.triggerMs > 300000) {
         LOG("SIM", "数据流量: 总超时 5 分钟，放弃重试");
         s_tsm.state = TS_TIMED_OUT;
+        break;
+      }
+      String cmd = "AT+CGACT=";
+      cmd += config.dataTraffic ? "1" : "0";
+      cmd += ",1";
+      LOG("SIM", "数据流量: 发送 %s", cmd.c_str());
+      bool ok = simSendCommand(cmd.c_str(), 6000, nullptr, false);
+      if (ok) {
+        LOG("SIM", "数据流量: AT+CGACT 成功");
+        s_tsm.state = TS_DONE;
+      } else {
+        LOG("SIM", "数据流量: AT+CGACT 失败或超时，3s 后重试");
+        s_tsm.lastActionMs = millis();
+        s_tsm.state        = TS_WAIT_RETRY;
       }
       break;
     }
@@ -103,8 +93,7 @@ static void simTrafficTick() {
         LOG("SIM", "数据流量: 总超时 5 分钟，放弃重试");
         s_tsm.state = TS_TIMED_OUT;
       } else if (millis() - s_tsm.lastActionMs >= 3000) {
-        s_tsm.respBuf = "";
-        s_tsm.state   = TS_PENDING;
+        s_tsm.state = TS_PENDING;
       }
       break;
     }
@@ -188,7 +177,6 @@ void simInit() {
     s_tsm.state        = TS_PENDING;
     s_tsm.triggerMs    = millis();
     s_tsm.lastActionMs = millis();
-    s_tsm.respBuf      = "";
     LOG("SIM", "SIM 初始化成功");
   } else {
     s_state = SIM_INIT_FAILED;
@@ -222,7 +210,6 @@ void simHandleURC(const String& line) {
     SimState prev = s_state;
     s_state      = SIM_NOT_INSERTED;
     s_needReinit = false;
-    s_phoneNum   = "";
     s_tsm        = TrafficSM{};
     LOG("SIM", "SIM 卡已拔出，状态已清除");
 
@@ -247,7 +234,6 @@ void simTick() {
       s_tsm.state        = TS_PENDING;
       s_tsm.triggerMs    = millis();
       s_tsm.lastActionMs = millis();
-      s_tsm.respBuf      = "";
       LOG("SIM", "热插入初始化成功");
     } else {
       s_state = SIM_INIT_FAILED;
@@ -256,38 +242,15 @@ void simTick() {
   }
 
   simTrafficTick();
-
-  // 若号码仍未知（部分运营商 AT+CNUM 需注网完成后才返回），每 3s 重试一次
-  if (s_state == SIM_READY && s_phoneNum == "未知") {
-    static unsigned long lastPhoneRetryMs = 0;
-    if (millis() - lastPhoneRetryMs >= 3000) {
-      lastPhoneRetryMs = millis();
-      LOG("SIM", "本机号码未知，重新获取...");
-      simFetchInfo();
-    }
-  }
 }
 
 // ---------- SIM info cache fetch (called after SIM_READY) ----------
 
-static String sendATandRead(const char* cmd, unsigned long timeout) {
-  while (Serial1.available()) Serial1.read();
-  Serial1.println(cmd);
-  unsigned long start = millis();
-  String resp;
-  while (millis() - start < timeout) {
-    while (Serial1.available()) {
-      char c = Serial1.read(); resp += c;
-    }
-    if (resp.indexOf("OK") >= 0 || resp.indexOf("ERROR") >= 0) break;
-  }
-  return resp;
-}
-
 void simFetchInfo() {
   // AT+COPS? → +COPS: 0,0,"中国移动",7
   {
-    String resp = sendATandRead("AT+COPS?", 3000);
+    String resp;
+    simSendCommand("AT+COPS?", 3000, &resp, false);
     int start = resp.indexOf("+COPS:");
     if (start >= 0) {
       int q1 = resp.indexOf('"', start);
@@ -299,29 +262,10 @@ void simFetchInfo() {
     }
   }
 
-  // AT+CNUM → +CNUM: "","13900001234",129
-  {
-    String resp = sendATandRead("AT+CNUM", 3000);
-    int start = resp.indexOf("+CNUM:");
-    if (start >= 0) {
-      // 找第二对引号（第一对是 alpha 名称，可为空）
-      int q1 = resp.indexOf('"', start);
-      int q2 = (q1 >= 0) ? resp.indexOf('"', q1 + 1) : -1;
-      int q3 = (q2 >= 0) ? resp.indexOf('"', q2 + 1) : -1;
-      int q4 = (q3 >= 0) ? resp.indexOf('"', q3 + 1) : -1;
-      if (q3 >= 0 && q4 > q3) {
-        String num = resp.substring(q3 + 1, q4);
-        if (num.length() > 0) {
-          s_phoneNum = num;
-          LOG("SIM", "本机号码: %s", s_phoneNum.c_str());
-        }
-      }
-    }
-  }
-
   // AT+CSQ → +CSQ: 20,0  (CSQ 99 = unknown)
   {
-    String resp = sendATandRead("AT+CSQ", 2000);
+    String resp;
+    simSendCommand("AT+CSQ", 2000, &resp, false);
     int start = resp.indexOf("+CSQ:");
     if (start >= 0) {
       int csq = -1;
@@ -342,6 +286,27 @@ void simFetchInfo() {
 
 // ---------- Getter functions ----------
 
-String simGetCarrier()     { return s_carrier; }
-String simGetPhoneNumber() { return s_phoneNum; }
-String simGetSignal()      { return s_signal; }
+String simGetCarrier() { return s_carrier; }
+String simGetSignal()  { return s_signal; }
+
+// ---------- URC 路由（由 SIM reader task 回调调用） ----------
+
+static void onUrc(SimUrcType type, const String& line) {
+  switch (type) {
+    case SimUrcType::RING:       callHandleRING();          break;
+    case SimUrcType::CLIP:       callHandleCLIP(line);      break;
+    case SimUrcType::CMT:        smsHandleCMTHeader();      break;
+    case SimUrcType::CMT_PDU:    smsHandlePDU(line);        break;
+    case SimUrcType::CPIN_READY: simHandleURC(line);        break;
+    case SimUrcType::SIM_REMOVE: simHandleURC(line);        break;
+    default:                                                 break;
+  }
+}
+
+// ---------- simStartReaderTask ----------
+
+void simStartReaderTask() {
+  simRegisterUrcCallback(onUrc);
+  simDispatcherStart();
+  LOG("SIM", "SIM reader task 已启动");
+}

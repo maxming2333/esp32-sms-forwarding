@@ -8,6 +8,7 @@
 #include "logger.h"
 #include "config/config.h"
 #include "sim/sim.h"
+#include "call/call.h"
 #include "time/time_module.h"
 #include "sms/sms.h"
 #include "push/push.h"
@@ -104,6 +105,9 @@ void setup() {
   setupHttpServer(server);
   otaInit();
 
+  callInit();
+  simStartReaderTask();
+
   digitalWrite(LED_BUILTIN, LOW);
 
   if (wifiManagerGetMode() == WIFI_MODE_STA_CONNECTED && isConfigValid()) {
@@ -123,12 +127,13 @@ void loop() {
     }
   }
   checkConcatTimeout();
-  checkSerial1URC();
+  callTick();
   simTick();
 
-  // SIM 就绪后抓取运营商/号码/信号，并在 NTP 未同步时从 SIM NITZ 同步时间
+  // SIM 就绪后抓取运营商/信号，并在 NTP 未同步时从 SIM NITZ 同步时间
   if (!s_simInfoFetched && simGetState() == SIM_READY) {
     s_simInfoFetched = true;
+    simFetchInfo();
     if (!timeSynced) {
       timeModuleSyncFromSIM();
       timeSynced = (time(nullptr) >= 1000000);

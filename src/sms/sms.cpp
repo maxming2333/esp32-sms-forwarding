@@ -1,21 +1,12 @@
 #include "sms.h"
-#include "sim/sim.h"
 #include "config/config.h"
 #include "push/push.h"
 #include "email/email.h"
 #include "logger.h"
+#include "phone_utils.h"
 #include <pdulib.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
-
-#define SERIAL_BUFFER_SIZE 500
-
-// ---------- call notification state ----------
-
-static bool          s_callPending        = false;
-static String        s_callCallerNumber   = "";
-static unsigned long s_callLastNotifyMs   = 0;
-constexpr unsigned long CALL_DEDUP_MS     = 30000;
 
 static PDU pdu = PDU(4096);
 static ConcatSms concatBuffer[MAX_CONCAT_MESSAGES];
@@ -243,68 +234,8 @@ bool sendSMSPDU(const char* phoneNumber, const char* message) {
   return true;
 }
 
-// forward declaration for blacklist check
-static bool phoneMatchesBlacklist(const String& incoming);
-
-// ---------- blacklist helpers ----------
-
-// 从本机号码中提取区号（如 "86"），用于对短号码进行区号补齐比对。
-// 若本机号码未知或长度不足以推断区号，返回空字符串。
-static String extractAreaCode() {
-  String phone = simGetPhoneNumber();
-  if (phone.length() == 0 || phone.equals("未知")) return "";
-  if (phone.startsWith("+")) phone = phone.substring(1);
-  if (phone.startsWith("00")) phone = phone.substring(2);
-  if ((int)phone.length() <= 11) return "";
-  return phone.substring(0, phone.length() - 11);
-}
-
-static String normalizePhone(const String& raw) {
-  String s = raw;
-  s.trim();
-  if (s.startsWith("+")) s = s.substring(1);
-  if (s.startsWith("00")) s = s.substring(2);
-  String areaCode = extractAreaCode();
-  if (areaCode.length() > 0 && (int)s.length() <= 11) {
-    s = areaCode + s;
-  }
-  return s;
-}
-
-static bool phoneMatchesBlacklist(const String& incoming) {
-  String normIn = normalizePhone(incoming);
-  for (int i = 0; i < config.blacklistCount; i++) {
-    if (normIn.equals(normalizePhone(config.blacklist[i]))) {
-      return true;
-    }
-  }
-  return false;
-}
-
-static void processCallNotification(const String& callerNum) {
-  if (phoneMatchesBlacklist(callerNum)) {
-    LOG("SMS", "黑名单拦截来电，号码: %s", callerNum.c_str());
-    s_callPending = false;
-    return;
-  }
-
-  // Build notification content
-  time_t now = time(nullptr);
-  char ts[20];
-  struct tm t;
-  localtime_r(&now, &t);
-  strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &t);
-
-  String message = "来电号码: " + callerNum + "\n时间: " + String(ts);
-  String subject = "来电通知: " + callerNum;
-
-  sendPushNotification(callerNum, message, String(ts), MSG_TYPE_CALL);
-  sendEmailNotification(subject.c_str(), message.c_str());
-
-  s_callLastNotifyMs = millis();
-  s_callPending      = false;
-  LOG("SMS", "来电通知已发送，号码: %s", callerNum.c_str());
-}
+// forward declaration
+static void processSmsContent(const char* sender, const char* text, const char* timestamp);
 
 static void processAdminCommand(const char* sender, const char* text) {
   String cmd = String(text); cmd.trim();
@@ -360,24 +291,6 @@ static void processSmsContent(const char* sender, const char* text, const char* 
   sendEmailNotification(subject.c_str(), body.c_str());
 }
 
-static String readSerialLine(HardwareSerial& port) {
-  static char lineBuf[SERIAL_BUFFER_SIZE];
-  static int linePos = 0;
-  while (port.available()) {
-    char c = port.read();
-    if (c == '\n') {
-      lineBuf[linePos] = 0;
-      String res = String(lineBuf);
-      linePos = 0;
-      return res;
-    } else if (c != '\r') {
-      if (linePos < SERIAL_BUFFER_SIZE - 1) lineBuf[linePos++] = c;
-      else linePos = 0;
-    }
-  }
-  return "";
-}
-
 static bool isHexString(const String& str) {
   if (str.length() == 0) return false;
   for (unsigned int i = 0; i < str.length(); i++) {
@@ -386,6 +299,59 @@ static bool isHexString(const String& str) {
       return false;
   }
   return true;
+}
+
+static void processPduLine(const String& line) {
+  if (!isHexString(line)) {
+    LOG("SMS", "收到非PDU数据，忽略");
+    return;
+  }
+
+  LOG("SMS", "收到PDU数据: %s", line.c_str());
+
+  if (!pdu.decodePDU(line.c_str())) {
+    LOG("SMS", "PDU解析失败！");
+    return;
+  }
+
+  LOG("SMS", "PDU解析成功: 发送者=%s 时间=%s 内容=%s",
+          pdu.getSender(), pdu.getTimeStamp(), pdu.getText());
+
+  int* concatInfo = pdu.getConcatInfo();
+  int refNumber   = concatInfo[0];
+  int partNumber  = concatInfo[1];
+  int totalParts  = concatInfo[2];
+
+  LOG("SMS", "长短信信息: 参考号=%d 当前=%d 总计=%d", refNumber, partNumber, totalParts);
+
+  if (totalParts > 1 && partNumber > 0) {
+    LOG("SMS", "收到长短信分段 %d/%d", partNumber, totalParts);
+    int slot = findOrCreateConcatSlot(refNumber, pdu.getSender(), totalParts);
+    int partIndex = partNumber - 1;
+    if (partIndex >= 0 && partIndex < MAX_CONCAT_PARTS) {
+      if (!concatBuffer[slot].parts[partIndex].valid) {
+        concatBuffer[slot].parts[partIndex].valid = true;
+        concatBuffer[slot].parts[partIndex].text  = String(pdu.getText());
+        concatBuffer[slot].receivedParts++;
+        if (concatBuffer[slot].receivedParts == 1) {
+          concatBuffer[slot].timestamp = String(pdu.getTimeStamp());
+        }
+        LOG("SMS", "已缓存分段 %d，当前已收到 %d/%d", partNumber, concatBuffer[slot].receivedParts, totalParts);
+      } else {
+        LOG("SMS", "分段 %d 已存在，跳过", partNumber);
+      }
+    }
+    if (concatBuffer[slot].receivedParts >= totalParts) {
+      LOG("SMS", "长短信已收齐，开始合并转发");
+      String fullText = assembleConcatSms(slot);
+      processSmsContent(concatBuffer[slot].sender.c_str(),
+                        fullText.c_str(),
+                        concatBuffer[slot].timestamp.c_str());
+      clearConcatSlot(slot);
+    }
+  } else {
+    processSmsContent(pdu.getSender(), pdu.getText(), pdu.getTimeStamp());
+  }
 }
 
 // ---------- public API ----------
@@ -401,100 +367,12 @@ void initConcatBuffer() {
   }
 }
 
-void checkSerial1URC() {
-  static enum { IDLE, WAIT_PDU } state = IDLE;
+void smsHandleCMTHeader() {
+  LOG("SMS", "检测到+CMT，等待PDU数据...");
+}
 
-  String line = readSerialLine(Serial1);
-  if (line.length() == 0) return;
-
-  // SIM URC dispatch — must come before CMT processing
-  if (line.startsWith("+CPIN:") || line.startsWith("+SIMCARD:")) {
-    simHandleURC(line);
-    return;
-  }
-
-  if (state == IDLE) {
-    // 来电通知: RING URC
-    if (line.equals("RING")) {
-      if (millis() - s_callLastNotifyMs >= CALL_DEDUP_MS) {
-        s_callPending      = true;
-        s_callCallerNumber = "未知号码";
-        LOG("SMS", "检测到来电RING，等待+CLIP号码");
-      }
-      return;
-    }
-
-    // 来电通知: +CLIP URC，提取主叫号码
-    if (line.startsWith("+CLIP:")) {
-      int q1 = line.indexOf('"');
-      int q2 = line.indexOf('"', q1 + 1);
-      if (q1 >= 0 && q2 > q1) {
-        s_callCallerNumber = line.substring(q1 + 1, q2);
-      }
-      if (s_callPending) {
-        processCallNotification(s_callCallerNumber);
-      }
-      return;
-    }
-
-    if (line.startsWith("+CMT:")) {
-      LOG("SMS", "检测到+CMT，等待PDU数据...");
-      state = WAIT_PDU;
-    }
-  } else if (state == WAIT_PDU) {
-    if (line.length() == 0) return;
-
-    if (isHexString(line)) {
-      LOG("SMS", "收到PDU数据: %s", line.c_str());
-
-      if (!pdu.decodePDU(line.c_str())) {
-        LOG("SMS", "PDU解析失败！");
-      } else {
-        LOG("SMS", "PDU解析成功: 发送者=%s 时间=%s 内容=%s",
-                pdu.getSender(), pdu.getTimeStamp(), pdu.getText());
-
-        int* concatInfo = pdu.getConcatInfo();
-        int refNumber   = concatInfo[0];
-        int partNumber  = concatInfo[1];
-        int totalParts  = concatInfo[2];
-
-        LOG("SMS", "长短信信息: 参考号=%d 当前=%d 总计=%d", refNumber, partNumber, totalParts);
-
-        if (totalParts > 1 && partNumber > 0) {
-          LOG("SMS", "收到长短信分段 %d/%d", partNumber, totalParts);
-          int slot = findOrCreateConcatSlot(refNumber, pdu.getSender(), totalParts);
-          int partIndex = partNumber - 1;
-          if (partIndex >= 0 && partIndex < MAX_CONCAT_PARTS) {
-            if (!concatBuffer[slot].parts[partIndex].valid) {
-              concatBuffer[slot].parts[partIndex].valid = true;
-              concatBuffer[slot].parts[partIndex].text  = String(pdu.getText());
-              concatBuffer[slot].receivedParts++;
-              if (concatBuffer[slot].receivedParts == 1) {
-                concatBuffer[slot].timestamp = String(pdu.getTimeStamp());
-              }
-              LOG("SMS", "已缓存分段 %d，当前已收到 %d/%d", partNumber, concatBuffer[slot].receivedParts, totalParts);
-            } else {
-              LOG("SMS", "分段 %d 已存在，跳过", partNumber);
-            }
-          }
-          if (concatBuffer[slot].receivedParts >= totalParts) {
-            LOG("SMS", "长短信已收齐，开始合并转发");
-            String fullText = assembleConcatSms(slot);
-            processSmsContent(concatBuffer[slot].sender.c_str(),
-                              fullText.c_str(),
-                              concatBuffer[slot].timestamp.c_str());
-            clearConcatSlot(slot);
-          }
-        } else {
-          processSmsContent(pdu.getSender(), pdu.getText(), pdu.getTimeStamp());
-        }
-      }
-      state = IDLE;
-    } else {
-      LOG("SMS", "收到非PDU数据，返回IDLE状态");
-      state = IDLE;
-    }
-  }
+void smsHandlePDU(const String& line) {
+  processPduLine(line);
 }
 
 void checkConcatTimeout() {

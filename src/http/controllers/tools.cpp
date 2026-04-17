@@ -2,6 +2,7 @@
 #include "config/config.h"
 #include "logger.h"
 #include "sms/sms.h"
+#include "sim/sim_dispatcher.h"
 #include "wifi/wifi_manager.h"
 #include <ArduinoJson.h>
 #include <AsyncJson.h>
@@ -11,24 +12,11 @@
 // ── CSRF Token（内存态，非持久化）──────────────────────────────
 static String g_resetToken = "";
 
-// ---------- shared helpers ----------
-
-static String sendATCommand(const char* cmd, unsigned long timeout) {
-  while (Serial1.available()) Serial1.read();
-  Serial1.println(cmd);
-  unsigned long start = millis();
+// ── shared helpers ──────────────────────────────────────────────────
+// sendATCommand: 通过 SimCommandDispatcher 串行发送 AT 指令并返回响应字符串
+static String sendATCommand(const char* cmd, unsigned long timeoutMs) {
   String resp;
-  while (millis() - start < timeout) {
-    while (Serial1.available()) {
-      char c = Serial1.read();
-      resp += c;
-      if (resp.indexOf("OK") >= 0 || resp.indexOf("ERROR") >= 0) {
-        delay(50);
-        while (Serial1.available()) resp += (char)Serial1.read();
-        return resp;
-      }
-    }
-  }
+  simSendCommand(cmd, static_cast<uint32_t>(timeoutMs), &resp, false);
   return resp;
 }
 
@@ -61,11 +49,11 @@ void sendSmsController(AsyncWebServerRequest* request) {
 void pingController(AsyncWebServerRequest* request) {
   LOG("HTTP", "网页端发起Ping请求");
 
-  while (Serial1.available()) Serial1.read();
-  sendATCommand("AT+CGACT=1,1", 10000);
-  while (Serial1.available()) Serial1.read();
+  simSendCommand("AT+CGACT=1,1", 10000, nullptr, false);
   delay(500);
 
+  // AT+MPING 为异步多行响应，通过 Serial1 直接收取（reader task 此时已阻塞在调用方等待）
+  while (Serial1.available()) Serial1.read();
   Serial1.println("AT+MPING=\"8.8.8.8\",30,1");
 
   unsigned long start = millis();

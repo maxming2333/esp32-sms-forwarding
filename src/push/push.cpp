@@ -3,6 +3,7 @@
 #include "msg_context.h"
 #include "time/time_module.h"
 #include "sim/sim.h"
+#include "sim/sim_dispatcher.h"
 #include "logger.h"
 #include <WiFi.h>
 #include <time.h>
@@ -19,7 +20,7 @@ void sendPushNotification(const String& sender, const String& message, const Str
   ctx.date      = timeModuleGetDateStr();
   ctx.deviceId  = msgContextGetDeviceId();
   ctx.carrier   = simGetCarrier();
-  ctx.simNumber = simGetPhoneNumber();
+  ctx.simNumber = simQueryPhoneNumber(3000);
   ctx.simSlot   = "SIM1";
   ctx.signal    = simGetSignal();
 

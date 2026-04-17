@@ -1,9 +1,8 @@
 #include "time_module.h"
 #include "logger.h"
+#include "sim/sim_dispatcher.h"
 #include <time.h>
 #include <sys/time.h>
-
-// Serial1 由 main.cpp 已配置，此处直接使用
 
 void timeModuleInit() {
   // 默认设置 UTC+8，待 SIM 或 NTP 同步后覆盖
@@ -13,29 +12,15 @@ void timeModuleInit() {
 }
 
 void timeModuleSyncFromSIM() {
-  // 清空串口缓冲区
-  while (Serial1.available()) Serial1.read();
-
-  Serial1.println("AT+CCLK?");
-  unsigned long start = millis();
   String resp;
-  while (millis() - start < 3000) {
-    while (Serial1.available()) {
-      char c = Serial1.read();
-      resp += c;
-    }
-    if (resp.indexOf("+CCLK:") >= 0 && resp.indexOf("OK") >= 0) break;
-    if (resp.indexOf("ERROR") >= 0) break;
-  }
-
-  // 解析 +CCLK: "YY/MM/DD,HH:MM:SS±TZ"
-  int cclkIdx = resp.indexOf("+CCLK:");
-  if (cclkIdx < 0) {
+  bool ok = simSendCommand("AT+CCLK?", 3000, &resp, false);
+  if (!ok && resp.indexOf("+CCLK:") < 0) {
     LOG("Time", "AT+CCLK? 无响应，跳过 SIM 时间同步");
     return;
   }
 
   // 提取引号内字符串
+  int cclkIdx = resp.indexOf("+CCLK:");
   int q1 = resp.indexOf('"', cclkIdx);
   int q2 = resp.indexOf('"', q1 + 1);
   if (q1 < 0 || q2 <= q1) {
