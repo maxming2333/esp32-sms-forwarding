@@ -1,8 +1,9 @@
 #include "ota_manager.h"
 #include <esp_ota_ops.h>
-#include <esp_http_client.h>
+#include <HTTPClient.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include "http/http_util.h"
 #include "logger.h"
 
 // ── 内部静态状态 ─────────────────────────────────────────────────
@@ -19,14 +20,16 @@ static TaskHandle_t            g_taskHandle = nullptr;
 
 // ── otaInit ──────────────────────────────────────────────────────
 void otaInit() {
-    const esp_app_desc_t* d = esp_ota_get_app_description();
-    g_currentVer = String(d->version);
+    // 直接使用构建宏，避免 --allow-multiple-definition 下 esp_app_desc
+    // 被 libapp_update.a（arduino-lib-builder）的同名符号覆盖的问题。
+    g_currentVer = String(APP_VERSION);
     g_state      = OtaState::IDLE;
     g_progress   = 0;
     g_message    = "";
     g_latestVer  = "";
     g_inProgress = false;
-    LOG("OTA", "初始化完成，当前版本: %s", g_currentVer.c_str());
+    LOG("OTA", "初始化完成，版本: %s | 编译: %s %s",
+        g_currentVer.c_str(), APP_BUILD_DATE, APP_BUILD_TIME);
 }
 
 // ── otaGetStatus ─────────────────────────────────────────────────
@@ -40,6 +43,38 @@ OtaStatusPayload otaGetStatus() {
     return p;
 }
 
+// ── checkVersionTask — 仅查询最新版本，不下载固件 ─────────────────
+static void checkVersionTask(void* /*param*/) {
+    g_state    = OtaState::CHECKING;
+    g_progress = 0;
+    g_message  = "正在查询最新版本...";
+    LOG("OTA", "版本检查: %s", OTA_LATEST_URL);
+
+    HTTPClient verHttp;
+    httpClientBegin(verHttp, OTA_LATEST_URL);
+    verHttp.setTimeout(OTA_HTTP_TIMEOUT_MS);
+    verHttp.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+    int verCode = verHttp.GET();
+    String latestTag = "";
+    if (verCode == 301 || verCode == 302) {
+        String location = verHttp.getLocation();
+        int slash = location.lastIndexOf('/');
+        if (slash >= 0 && slash < (int)location.length() - 1) {
+            latestTag = location.substring(slash + 1);
+        }
+        LOG("OTA", "最新版本: %s", latestTag.c_str());
+    } else {
+        LOG("OTA", "版本检查响应码: %d（期望 301/302）", verCode);
+    }
+    verHttp.end();
+
+    g_latestVer  = latestTag;
+    g_inProgress = false;
+    g_state      = OtaState::IDLE;
+    g_message    = "";
+    vTaskDelete(nullptr);
+}
+
 // ── onlineUpgradeTask — 后台 FreeRTOS 任务 ───────────────────────
 static void onlineUpgradeTask(void* /*param*/) {
     // --- 阶段1: 版本检查 ---
@@ -48,43 +83,23 @@ static void onlineUpgradeTask(void* /*param*/) {
     g_message  = "正在查询最新版本...";
     LOG("OTA", "开始版本检查: %s", OTA_LATEST_URL);
 
-    esp_http_client_config_t verCfg = {};
-    verCfg.url                      = OTA_LATEST_URL;
-    verCfg.skip_cert_common_name_check = true;
-    verCfg.transport_type           = HTTP_TRANSPORT_OVER_SSL;
-    verCfg.disable_auto_redirect    = false;
-    verCfg.max_redirection_count    = 10;
-    verCfg.timeout_ms               = OTA_HTTP_TIMEOUT_MS;
-    verCfg.crt_bundle_attach        = nullptr;
-
-    esp_http_client_handle_t verClient = esp_http_client_init(&verCfg);
-    if (!verClient) {
-        g_state    = OtaState::FAILED;
-        g_message  = "版本检查失败：HTTP 客户端初始化错误";
-        LOG("OTA", "版本检查失败：HTTP 客户端初始化错误");
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        g_inProgress = false;
-        g_state      = OtaState::IDLE;
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    esp_err_t verErr = esp_http_client_perform(verClient);
+    HTTPClient verHttp;
+    httpClientBegin(verHttp, OTA_LATEST_URL);
+    verHttp.setTimeout(OTA_HTTP_TIMEOUT_MS);
+    verHttp.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+    int verCode = verHttp.GET();
     String latestTag = "";
-    if (verErr == ESP_OK) {
-        // 从重定向后的 URL 末尾提取 tag（如 /releases/tag/v1-abc1234）
-        char urlBuf[256] = {};
-        esp_http_client_get_url(verClient, urlBuf, sizeof(urlBuf) - 1);
-        String finalUrl = String(urlBuf);
-        int slash = finalUrl.lastIndexOf('/');
-        if (slash >= 0 && slash < (int)finalUrl.length() - 1) {
-            latestTag = finalUrl.substring(slash + 1);
+    if (verCode == 301 || verCode == 302) {
+        String location = verHttp.getLocation();
+        int slash = location.lastIndexOf('/');
+        if (slash >= 0 && slash < (int)location.length() - 1) {
+            latestTag = location.substring(slash + 1);
         }
-        LOG("OTA", "重定向 URL: %s → tag: %s", urlBuf, latestTag.c_str());
+        LOG("OTA", "重定向 URL: %s → tag: %s", location.c_str(), latestTag.c_str());
     } else {
-        LOG("OTA", "版本检查 HTTP 错误: %s", esp_err_to_name(verErr));
+        LOG("OTA", "版本检查响应码: %d（期望 301/302）", verCode);
     }
-    esp_http_client_cleanup(verClient);
+    verHttp.end();
 
     if (latestTag.isEmpty()) {
         g_state   = OtaState::FAILED;
@@ -131,21 +146,18 @@ static void onlineUpgradeTask(void* /*param*/) {
         return;
     }
 
-    esp_http_client_config_t dlCfg = {};
-    dlCfg.url                      = firmwareUrl.c_str();
-    dlCfg.skip_cert_common_name_check = true;
-    dlCfg.transport_type           = HTTP_TRANSPORT_OVER_SSL;
-    dlCfg.disable_auto_redirect    = false;
-    dlCfg.max_redirection_count    = 10;
-    dlCfg.timeout_ms               = OTA_HTTP_TIMEOUT_MS;
-    dlCfg.buffer_size              = 1024;
-    dlCfg.crt_bundle_attach        = nullptr;
-
-    esp_http_client_handle_t dlClient = esp_http_client_init(&dlCfg);
-    if (!dlClient) {
+    HTTPClient dlHttp;
+    httpClientBegin(dlHttp, firmwareUrl);
+    dlHttp.setTimeout(OTA_HTTP_TIMEOUT_MS);
+    dlHttp.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+    dlHttp.setRedirectLimit(10);
+    int dlCode = dlHttp.GET();
+    if (dlCode != 200) {
+        dlHttp.end();
         esp_ota_abort(g_otaHandle);
         g_state   = OtaState::FAILED;
-        g_message = "下载初始化失败";
+        g_message = "连接固件服务器失败，响应码: " + String(dlCode);
+        LOG("OTA", "固件下载 HTTP 响应码: %d", dlCode);
         vTaskDelay(pdMS_TO_TICKS(5000));
         g_inProgress = false;
         g_state      = OtaState::IDLE;
@@ -153,50 +165,39 @@ static void onlineUpgradeTask(void* /*param*/) {
         return;
     }
 
-    err = esp_http_client_open(dlClient, 0);
-    if (err != ESP_OK) {
-        esp_http_client_cleanup(dlClient);
-        esp_ota_abort(g_otaHandle);
-        g_state   = OtaState::FAILED;
-        g_message = "连接固件服务器失败: " + String(esp_err_to_name(err));
-        LOG("OTA", "esp_http_client_open 失败: %s", esp_err_to_name(err));
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        g_inProgress = false;
-        g_state      = OtaState::IDLE;
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    int contentLen = esp_http_client_fetch_headers(dlClient);
+    int contentLen = dlHttp.getSize();
     LOG("OTA", "固件大小: %d 字节", contentLen);
 
-    static uint8_t dlBuf[1024];
+    WiFiClient* dlStream = dlHttp.getStreamPtr();
+    uint8_t dlBuf[512];
     int totalWritten = 0;
+    int remaining    = contentLen;
     bool dlFailed    = false;
 
-    while (true) {
-        int readLen = esp_http_client_read(dlClient, (char*)dlBuf, sizeof(dlBuf));
-        if (readLen < 0) {
-            LOG("OTA", "下载读取错误: %d", readLen);
-            dlFailed = true;
-            break;
-        }
-        if (readLen == 0) break;  // 下载完成
-
-        err = esp_ota_write(g_otaHandle, dlBuf, readLen);
-        if (err != ESP_OK) {
-            LOG("OTA", "esp_ota_write 失败: %s", esp_err_to_name(err));
-            dlFailed = true;
-            break;
-        }
-        totalWritten += readLen;
-        if (contentLen > 0) {
-            g_progress = (uint8_t)((totalWritten * 100) / contentLen);
+    while (dlHttp.connected() && (remaining > 0 || remaining == -1)) {
+        int available = dlStream->available();
+        if (available > 0) {
+            int toRead  = min(available, (int)sizeof(dlBuf));
+            int readLen = dlStream->readBytes(dlBuf, toRead);
+            if (readLen > 0) {
+                esp_err_t wErr = esp_ota_write(g_otaHandle, dlBuf, readLen);
+                if (wErr != ESP_OK) {
+                    LOG("OTA", "esp_ota_write 失败: %s", esp_err_to_name(wErr));
+                    dlFailed = true;
+                    break;
+                }
+                totalWritten += readLen;
+                if (remaining > 0) remaining -= readLen;
+                if (contentLen > 0) {
+                    g_progress = (uint8_t)((totalWritten * 100) / contentLen);
+                }
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
 
-    esp_http_client_close(dlClient);
-    esp_http_client_cleanup(dlClient);
+    dlHttp.end();
 
     if (dlFailed) {
         esp_ota_abort(g_otaHandle);
@@ -244,6 +245,16 @@ static void onlineUpgradeTask(void* /*param*/) {
     esp_restart();
 
     vTaskDelete(nullptr);
+}
+
+// ── otaStartVersionCheck ──────────────────────────────────────────
+void otaStartVersionCheck() {
+    if (g_inProgress) return;
+    g_inProgress = true;
+    g_latestVer  = "";
+    g_state      = OtaState::IDLE;
+    xTaskCreate(checkVersionTask, "ota_check", OTA_TASK_STACK_SIZE / 2,
+                nullptr, OTA_TASK_PRIORITY, nullptr);
 }
 
 // ── otaStartOnlineUpgrade ─────────────────────────────────────────

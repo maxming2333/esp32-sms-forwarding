@@ -40,10 +40,9 @@ void otaStatusController(AsyncWebServerRequest* request) {
 void otaVersionController(AsyncWebServerRequest* request) {
     OtaStatusPayload status = otaGetStatus();
 
-    // 仅 IDLE 状态下触发版本检查
-    if (status.state == OtaState::IDLE) {
-        otaStartOnlineUpgrade();
-        // 重新获取（状态已变为 CHECKING）
+    // 仅 IDLE 状态且尚未有版本信息时触发版本检查（不下载固件）
+    if (status.state == OtaState::IDLE && status.latestVersion.isEmpty()) {
+        otaStartVersionCheck();
         status = otaGetStatus();
     }
 
@@ -56,20 +55,6 @@ void otaVersionController(AsyncWebServerRequest* request) {
 
 // ── POST /api/ota/start ───────────────────────────────────────────
 void otaStartController(AsyncWebServerRequest* request) {
-    OtaStatusPayload status = otaGetStatus();
-
-    // latestVersion 为空时拒绝（尚未完成版本检查）
-    if (status.latestVersion.isEmpty()) {
-        AsyncJsonResponse* resp = new AsyncJsonResponse();
-        resp->setCode(400);
-        JsonObject root = resp->getRoot();
-        root["success"] = false;
-        root["message"] = "尚未完成版本检查，无法发起在线升级";
-        resp->setLength();
-        request->send(resp);
-        return;
-    }
-
     bool started = otaStartOnlineUpgrade();
     if (!started) {
         // 已有升级进行中

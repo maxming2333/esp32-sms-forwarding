@@ -41,7 +41,11 @@ void otaInit();
 // 获取当前 OTA 状态快照（供 HTTP 控制器使用）
 OtaStatusPayload otaGetStatus();
 
-// 启动后台在线升级任务（非阻塞）
+// 启动后台版本检查任务（非阻塞，仅查询最新版本号，不下载固件）
+// 完成后状态回到 IDLE，g_latestVer 被填充
+void otaStartVersionCheck();
+
+// 启动后台在线升级任务（非阻塞，直接下载并刷写固件）
 // 返回 false 表示当前已有升级在进行中
 bool otaStartOnlineUpgrade();
 
