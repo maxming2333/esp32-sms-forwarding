@@ -60,6 +60,18 @@ bool sendPushChannel(int channelIdx, const String& sender, const String& message
 }
 
 void sendPushNotification(const String& sender, const String& message, const String& timestamp, MsgType msgType) {
+  // T015: 推送前检查本机号码是否就绪
+  if (!simIsNumberReady()) {
+    LOG("Push", "本机号码未知，所有通道入队等待号码就绪");
+    for (int i = 0; i < config.pushCount; i++) {
+      const PushChannel& ch = config.pushChannels[i];
+      if (!isPushChannelValid(ch)) continue;
+      if (ch.type == PUSH_TYPE_SMS && msgType == MSG_TYPE_SIM) continue;
+      pushRetryEnqueue(i, sender, message, timestamp, msgType, RetryReason::WAITING_NUMBER);
+    }
+    return;
+  }
+
   LOG("Push", "=== 开始多通道推送 ===");
   bool wifiOk = (WiFi.status() == WL_CONNECTED);
 

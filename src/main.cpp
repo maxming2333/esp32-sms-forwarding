@@ -23,9 +23,6 @@
 
 AsyncWebServer server(80);
 
-// Shared state (extern-referenced by handler_api_status.cpp)
-bool timeSynced = false;
-
 // 记录 SIM 信息是否已抓取（在 loop 中 SIM_READY 后执行一次）
 static bool s_simInfoFetched = false;
 
@@ -97,8 +94,7 @@ void setup() {
   // 时间同步：STA 模式下优先使用 NTP；AP 模式下等 SIM 就绪后从 NITZ 同步
   if (wifiManagerGetMode() == WIFI_MODE_STA_CONNECTED) {
     timeModuleSyncNTP();
-    timeSynced = (time(nullptr) >= 1000000);
-    if (timeSynced) {
+    if (timeModuleIsTimeSynced()) {
       LOG("WiFi", "NTP时间同步成功，UTC: %ld", (long)time(nullptr));
     } else {
       LOG("WiFi", "NTP时间同步失败，将在SIM就绪后通过NITZ同步");
@@ -144,15 +140,15 @@ void loop() {
   callTick();
   simTick();
   pushRetryTick();
+  timeModuleTick();
   wifiManagerTick();
 
   // SIM 就绪后抓取运营商/信号，并在 NTP 未同步时从 SIM NITZ 同步时间
   if (!s_simInfoFetched && simGetState() == SIM_READY) {
     s_simInfoFetched = true;
     simFetchInfo();
-    if (!timeSynced) {
+    if (!timeModuleIsTimeSynced()) {
       timeModuleSyncFromSIM();
-      timeSynced = (time(nullptr) >= 1000000);
     }
   }
 

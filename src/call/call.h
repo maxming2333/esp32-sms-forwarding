@@ -28,8 +28,11 @@
 /** 同一号码来电防抖窗口（毫秒）。硬编码，不提供 Web 配置界面。 */
 constexpr unsigned long CALL_DEDUP_MS     = 30000;
 
-/** RING 触发后等待 +CLIP 的最大时间（毫秒）。超时则以"未知号码"发通知。 */
-constexpr unsigned long CALL_CLIP_WAIT_MS = 5000;
+/** RING 触发后等待 +CLIP 的最大时间（毫秒）。超时则以"未获取号码"发通知。 */
+constexpr unsigned long CALL_CLIP_WAIT_MS = 15000;
+
+/** RING 触发后延迟多少毫秒主动发送 AT+CLCC 查询来电号码（被动 +CLIP 兜底）。 */
+constexpr unsigned long CALL_CLCC_DELAY_MS = 3000;
 
 // ---------- 模块初始化 ----------
 

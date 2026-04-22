@@ -563,13 +563,13 @@
         })
         .then(function(data) {
           btn.disabled = false; btn.textContent = '发送';
-          if (data.success) {
-            var lines = (data.response || '').split('\n');
-            for (var l = 0; l < lines.length; l++) {
-              if (lines[l].trim()) addLog(lines[l], 'resp');
-            }
-          } else {
-            addLog(data.message || '执行失败', 'error');
+          var lines = (data.message || '').split('\n');
+          var type  = data.success ? 'resp' : 'error';
+          for (var l = 0; l < lines.length; l++) {
+            if (lines[l].trim()) addLog(lines[l], type);
+          }
+          if (!data.success && !data.message) {
+            addLog('执行失败', 'error');
           }
         })
         .catch(function(e) {

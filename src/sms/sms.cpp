@@ -45,9 +45,12 @@ static void clearConcatSlot(int slot) {
 }
 
 static int findOrCreateConcatSlot(int refNumber, const char* sender, int totalParts) {
+  // 匹配已有槽位：refNumber + sender + totalParts 三者相同才视为同一条长短信
+  // 加入 totalParts 可区分同一发送者、相同参考号但总段数不同的并发长短信
   for (int i = 0; i < MAX_CONCAT_MESSAGES; i++) {
     if (concatBuffer[i].inUse &&
         concatBuffer[i].refNumber == refNumber &&
+        concatBuffer[i].totalParts == totalParts &&
         concatBuffer[i].sender.equals(sender)) {
       return i;
     }

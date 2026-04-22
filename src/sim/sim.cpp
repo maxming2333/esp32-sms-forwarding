@@ -18,6 +18,11 @@ static String   s_carrier    = "未知";
 static String   s_signal     = "未知";
 static String   s_phoneNum   = "未知";
 
+// ---------- US021: 本机号码重试状态 ----------
+static bool          s_numberReady   = false;
+static unsigned long s_numRetryNext  = 0;
+static constexpr unsigned long SIM_NUMBER_RETRY_INTERVAL_MS = 5000;
+
 // ---------- US2: 数据流量状态机 ----------
 
 enum TrafficState {
@@ -125,14 +130,19 @@ static bool waitCEREG() {
   return false;
 }
 
-// ---------- T006 helper: core init sequence (CGACT/CNMI/CMGF/CEREG) ----------
+// ---------- T006 helper: 模组配置（CNMI/CMGF/CLIP，必须在 CFUN=1 射频恢复后调用，
+//            CFUN=4→1 切换会重置这些非持久化设置）----------
 
-static bool runInitSequence() {
+static bool runModemConfig() {
   if (!runInitStep("AT+CNMI=2,2,0,0,0", 1000, 3, "CNMI")) return false;
   if (!runInitStep("AT+CMGF=0", 1000, 3, "CMGF")) return false;
-
   runInitStep("AT+CLIP=1", 1000, 3, "CLIP");  // 启用主叫号码上报，失败不阻断初始化
+  return true;
+}
 
+// ---------- T006 helper: 等待网络注册（需射频在线，在 CFUN=1 之后调用）----------
+
+static bool runNetworkWait() {
   // 轮询 CEREG，最多 30 次 × 2s = 60s
   for (int i = 0; i < 30; i++) {
     if (waitCEREG()) {
@@ -149,6 +159,12 @@ static bool runInitSequence() {
   }
   LOG("SIM", "网络注册超时");
   return false;
+}
+
+// ---------- T006 helper: 完整初始化序列（热插入路径使用，不含 CFUN 门控）----------
+
+static bool runInitSequence() {
+  return runModemConfig() && runNetworkWait();
 }
 
 // ---------- T006: simInit ----------
@@ -181,7 +197,48 @@ void simInit() {
   LOG("SIM", "SIM 卡就绪，开始初始化");
   s_state = SIM_INITIALIZING;
 
-  if (runInitSequence()) {
+  // 步骤1: 射频离线，在所有模块 ready 前保持离线，防止基站积压消息过早到达
+  if (sendATandWaitOK("AT+CFUN=4", 2000)) {
+    LOG("SIM", "射频已离线 (CFUN=4)，等待初始化完成后再上线");
+  } else {
+    LOG("SIM", "AT+CFUN=4 失败，退化为正常初始化流程");
+  }
+
+  delay(200);
+
+  // 步骤2: 查询本机号码（AT+CNUM 读 SIM 卡 EF 文件，不需要射频）
+  {
+    String num = simQueryPhoneNumber(3000);
+    if (num.length() > 0) {
+      s_phoneNum    = num;
+      s_numberReady = true;
+      LOG("SIM", "首次号码查询成功: %s", num.c_str());
+    } else {
+      s_numberReady  = false;
+      s_numRetryNext = millis() + SIM_NUMBER_RETRY_INTERVAL_MS;
+      LOG("SIM", "首次号码查询失败，5s 后重试");
+    }
+  }
+
+  // 步骤3: 所有准备完成，恢复射频上线
+  // 注意：CFUN=4→1 切换会重置 CNMI/CMGF/CLIP 等非持久化设置，
+  //       因此 runModemConfig 必须放在 CFUN=1 之后立即执行
+  sendATandWaitOK("AT+CFUN=1", 3000);
+  LOG("SIM", "射频已恢复 (CFUN=1)");
+
+  // 步骤4: 重新配置模组参数（CFUN=1 会重置这些设置，必须在此补全）
+  if (!runModemConfig()) {
+    s_state = SIM_INIT_FAILED;
+    LOG("SIM", "SIM 初始化失败（模组配置阶段）");
+    return;
+  }
+
+  // 步骤5: 等待网络注册
+  LOG("SIM", "等待网络注册");
+  if (runNetworkWait()) {
+    // 步骤5: 网络就绪后尝试 SIM 时间同步
+    timeModuleSyncFromSIM();
+
     s_state            = SIM_READY;
     s_tsm.state        = TS_PENDING;
     s_tsm.triggerMs    = millis();
@@ -193,21 +250,19 @@ void simInit() {
   }
 }
 
-// ---------- T007: simGetState ----------
+// ---------- simGetState ----------
 
 SimState simGetState() {
   return s_state;
 }
 
-// ---------- T009 + T012: simHandleURC ----------
+// ---------- simHandleURC ----------
 
 void simHandleURC(const String& line) {
   if (line.indexOf("+CPIN: READY") >= 0) {
     if (s_state != SIM_READY && s_state != SIM_INITIALIZING) {
       s_needReinit = true;
       LOG("SIM", "检测到 SIM 就绪 URC，等待重新初始化");
-
-      // T028: SIM 事件通知（插入）
       if (config.simNotifyEnabled) {
         sendPushNotification("设备", "SIM 卡已就绪，设备将重新初始化 SIM 模块", timeModuleGetDateStr(), MSG_TYPE_SIM);
       }
@@ -221,8 +276,6 @@ void simHandleURC(const String& line) {
     s_needReinit = false;
     s_tsm        = TrafficSM{};
     LOG("SIM", "SIM 卡已拔出，状态已清除");
-
-    // T028: SIM 事件通知（拔出）
     if (config.simNotifyEnabled && prev == SIM_READY) {
       sendPushNotification("设备", "SIM 卡已拔出，当前状态：未插入", timeModuleGetDateStr(), MSG_TYPE_SIM);
     }
@@ -230,14 +283,13 @@ void simHandleURC(const String& line) {
   }
 }
 
-// ---------- T010: simTick ----------
+// ---------- simTick ----------
 
 void simTick() {
   if (s_needReinit) {
     s_needReinit = false;
     s_state      = SIM_INITIALIZING;
     LOG("SIM", "开始热插入重新初始化");
-
     if (runInitSequence()) {
       s_state            = SIM_READY;
       s_tsm.state        = TS_PENDING;
@@ -251,12 +303,38 @@ void simTick() {
   }
 
   simTrafficTick();
+
+  // T008: 本机号码 10s 重试查询
+  if (s_state == SIM_READY && !s_numberReady && millis() >= s_numRetryNext) {
+    LOG("SIM", "本机号码重试查询...");
+    String resp;
+    bool ok = simSendCommand("AT+CNUM", 3000, &resp, false);
+    if (ok && resp.length() > 0) {
+      int start = resp.indexOf("+CNUM:");
+      if (start >= 0) {
+        int q1 = resp.indexOf('"', start);
+        int q2 = (q1 >= 0) ? resp.indexOf('"', q1 + 1) : -1;
+        if (q1 >= 0 && q2 > q1) {
+          String num = resp.substring(q1 + 1, q2);
+          if (num.length() > 0) {
+            s_phoneNum     = num;
+            s_numberReady  = true;
+            s_numRetryNext = ULONG_MAX;
+            LOG("SIM", "本机号码更新: %s", num.c_str());
+          }
+        }
+      }
+    }
+    if (!s_numberReady) {
+      s_numRetryNext = millis() + SIM_NUMBER_RETRY_INTERVAL_MS;
+      LOG("SIM", "本机号码重试失败，%lu ms 后再试", SIM_NUMBER_RETRY_INTERVAL_MS);
+    }
+  }
 }
 
-// ---------- SIM info cache fetch (called after SIM_READY) ----------
+// ---------- simFetchInfo ----------
 
 void simFetchInfo() {
-  // AT+COPS? → +COPS: 0,0,"中国移动",7
   {
     String resp;
     simSendCommand("AT+COPS?", 3000, &resp, false);
@@ -270,8 +348,6 @@ void simFetchInfo() {
       }
     }
   }
-
-  // AT+CSQ → +CSQ: 20,0  (CSQ 99 = unknown)
   {
     String resp;
     simSendCommand("AT+CSQ", 2000, &resp, false);
@@ -280,7 +356,6 @@ void simFetchInfo() {
       int csq = -1;
       sscanf(resp.c_str() + start + 5, " %d", &csq);
       if (csq >= 0 && csq != 99) {
-        // dBm ≈ -113 + 2*csq
         int dbm = -113 + 2 * csq;
         char buf[24];
         snprintf(buf, sizeof(buf), "%d (%ddBm)", csq, dbm);
@@ -291,22 +366,26 @@ void simFetchInfo() {
       }
     }
   }
-
-  // 查询本机号码
   {
     String num = simQueryPhoneNumber(3000);
     if (num.length() > 0) {
-      s_phoneNum = num;
+      s_phoneNum     = num;
+      s_numberReady  = true;
+      s_numRetryNext = ULONG_MAX;
       LOG("SIM", "本机号码: %s", s_phoneNum.c_str());
+    } else {
+      s_numberReady  = false;
+      s_numRetryNext = millis() + SIM_NUMBER_RETRY_INTERVAL_MS;
     }
   }
 }
 
 // ---------- Getter functions ----------
 
-String simGetCarrier() { return s_carrier; }
-String simGetSignal()  { return s_signal; }
+String simGetCarrier()  { return s_carrier; }
+String simGetSignal()   { return s_signal; }
 String simGetPhoneNum() { return s_phoneNum; }
+bool simIsNumberReady() { return s_numberReady; }
 
 // ---------- URC 路由（由 SIM reader task 回调调用） ----------
 

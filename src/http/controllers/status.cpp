@@ -1,11 +1,10 @@
 #include "status.h"
 #include "config/config.h"
 #include "sim/sim.h"
+#include "time/time_module.h"
 #include <AsyncJson.h>
 #include <ArduinoJson.h>
 #include <WiFi.h>
-
-extern bool timeSynced;
 
 static const char* simStateLabel(SimState s) {
   switch (s) {
@@ -28,7 +27,7 @@ void statusController(AsyncWebServerRequest* request) {
   root["wifiConnected"] = WiFi.isConnected();
   root["ssid"]          = WiFi.SSID();
   root["configValid"]   = isConfigValid();
-  root["timeSynced"]    = timeSynced;
+  root["timeSynced"]    = timeModuleIsTimeSynced();
   root["uptime"]        = millis() / 1000;
 
   SimState ss = simGetState();

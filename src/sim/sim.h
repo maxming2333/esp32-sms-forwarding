@@ -23,6 +23,9 @@ String simGetCarrier();
 String simGetSignal();
 String simGetPhoneNum();
 
+// 本机号码是否已成功查询（就绪后首次获取或重试成功后返回 true）
+bool simIsNumberReady();
+
 /**
  * @brief 注册 URC 回调后启动 SIM reader task。
  *        在 setup() 末尾所有模块初始化完成后调用。

@@ -4,6 +4,10 @@
 #include <time.h>
 #include <sys/time.h>
 
+// ---------- T009: 时间同步状态 ----------
+static bool          s_timeSynced       = false;
+static unsigned long s_simTimeRetryNext = 0;
+
 void timeModuleInit() {
   // 默认设置 UTC+8，待 SIM 或 NTP 同步后覆盖
   setenv("TZ", "UTC-8", 1);
@@ -64,6 +68,7 @@ void timeModuleSyncFromSIM() {
   setenv("TZ", tzStr, 1);
   tzset();
 
+  s_timeSynced = true;  // T010
   LOG("Time", "SIM时间同步成功: %s, 时区偏移: %d (UTC%+d)", ts.c_str(), tz, tzHours);
 }
 
@@ -81,9 +86,27 @@ void timeModuleSyncNTP() {
     retries++;
   }
   if (time(nullptr) >= 1000000) {
+    s_timeSynced = true;  // T010
     LOG("Time", "NTP时间同步成功，UTC+8: %ld", (long)time(nullptr));
   } else {
     LOG("Time", "NTP时间同步超时");
+  }
+}
+
+bool timeModuleIsTimeSynced() {
+  return s_timeSynced;
+}
+
+void timeModuleTick() {
+  if (s_timeSynced) return;
+  if (millis() < s_simTimeRetryNext) return;
+  LOG("Time", "SIM 时间重试...");
+  timeModuleSyncFromSIM();
+  if (time(nullptr) >= 1000000) {
+    s_timeSynced = true;
+    LOG("Time", "SIM 时间重试成功，停止重试");
+  } else {
+    s_simTimeRetryNext = millis() + 10000;
   }
 }
 
