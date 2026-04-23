@@ -1,18 +1,9 @@
 #include "msg_context.h"
 #include <Arduino.h>
-
-static String s_deviceId = "";
+#include "wifi/wifi_manager.h"
 
 String msgContextGetDeviceId() {
-  if (s_deviceId.length() > 0) return s_deviceId;
-
-  // 使用 ESP32 eFuse MAC 低 32 位作为设备 ID
-  uint64_t mac = ESP.getEfuseMac();
-  uint32_t low32 = (uint32_t)(mac & 0xFFFFFFFF);
-  char buf[9];
-  snprintf(buf, sizeof(buf), "%08X", low32);
-  s_deviceId = String(buf);
-  return s_deviceId;
+  return getDeviceId();
 }
 
 String renderTemplate(const String& tmpl, const MessageContext& ctx) {

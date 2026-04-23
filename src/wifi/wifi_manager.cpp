@@ -43,6 +43,13 @@ void wifiManagerInit() {
     return;
   }
 
+  // 设置客户端主机名（路由器 DHCP 列表中显示的名称），格式：SMS-Forwarder-XXXXXXXX
+  WiFi.mode(WIFI_STA);
+  {
+    String hostname = "SMS-Forwarder-" + getDeviceId();
+    WiFi.setHostname(hostname.c_str());
+  }
+
   // 扫描所有信道以连接信号最强的 AP，防止在 mesh 组网这类场景中连接到弱 AP
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
 
@@ -153,6 +160,16 @@ String wifiManagerGetIP() {
 
 String getDeviceUrl() {
   return "http://" + wifiManagerGetIP() + "/";
+}
+
+String getDeviceId() {
+  static String s_id = "";
+  if (s_id.length() > 0) return s_id;
+  uint32_t low32 = (uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF);
+  s_id = String(low32, HEX);
+  s_id.toUpperCase();
+  while (s_id.length() < 8) s_id = "0" + s_id;
+  return s_id;
 }
 
 void wifiManagerSetReconnectCallback(WifiReconnectCallback cb) {
