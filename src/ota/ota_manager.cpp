@@ -20,9 +20,24 @@ static TaskHandle_t            g_taskHandle = nullptr;
 
 // ── otaInit ──────────────────────────────────────────────────────
 void otaInit() {
-    // 直接使用构建宏，避免 --allow-multiple-definition 下 esp_app_desc
-    // 被 libapp_update.a（arduino-lib-builder）的同名符号覆盖的问题。
-    g_currentVer = String(APP_VERSION);
+    // 重建与 GitHub release tag 一致的完整版本号：
+    //   APP_VERSION   = "v1-551f992"        (prefix-sha)
+    //   release tag   = "v1-20260423T210356-551f992" (prefix-dateTimestamp-sha)
+    // APP_BUILD_DATE = "2026-04-23" → 去除 '-' → "20260423"
+    // APP_BUILD_TIME = "21:03:56"   → 去除 ':' → "210356"
+    {
+        String ver = String(APP_VERSION);
+        int lastDash = ver.lastIndexOf('-');
+        if (lastDash > 0) {
+            String prefix      = ver.substring(0, lastDash);
+            String sha         = ver.substring(lastDash + 1);
+            String dateCompact = String(APP_BUILD_DATE); dateCompact.replace("-", "");
+            String timeCompact = String(APP_BUILD_TIME); timeCompact.replace(":", "");
+            g_currentVer = prefix + "-" + dateCompact + "T" + timeCompact + "-" + sha;
+        } else {
+            g_currentVer = ver;
+        }
+    }
     g_state      = OtaState::IDLE;
     g_progress   = 0;
     g_message    = "";
