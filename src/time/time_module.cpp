@@ -117,9 +117,7 @@ String timeModuleGetDateStr() {
   }
   struct tm t;
   localtime_r(&now, &t);
-  char buf[24];
-  snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
-           t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
-           t.tm_hour, t.tm_min, t.tm_sec);
+  char buf[32];
+  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S%z", &t);
   return String(buf);
 }

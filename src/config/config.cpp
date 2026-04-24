@@ -69,6 +69,7 @@ void loadConfig() {
   }
 
   config.pushStrategy = (PushStrategy)(preferences.isKey("pushStrategy") ? preferences.getUChar("pushStrategy", 0) : 0);
+  config.remark        = preferences.isKey("remark") ? preferences.getString("remark", "") : "";
 
   config.blacklistCount = preferences.getInt("blCount", 0);
   if (config.blacklistCount > MAX_BLACKLIST_ENTRIES) config.blacklistCount = MAX_BLACKLIST_ENTRIES;
@@ -112,6 +113,7 @@ void saveConfig() {
   }
 
   preferences.putUChar("pushStrategy", (uint8_t)config.pushStrategy);
+  preferences.putString("remark", config.remark.substring(0, 64));
 
   preferences.putInt("blCount", config.blacklistCount);
   for (int i = 0; i < config.blacklistCount; i++) {

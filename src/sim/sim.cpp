@@ -338,6 +338,22 @@ void simTick() {
 
 // ---------- simFetchInfo ----------
 
+static String normalizeCarrier(const String& raw) {
+  if (raw == "CMCC" || raw == "China Mobile" || raw == "46000" ||
+      raw == "46002" || raw == "46007") {
+    return "中国移动";
+  }
+  if (raw == "CUCC" || raw == "China Unicom" || raw == "CHN-UNICOM" ||
+      raw == "46001" || raw == "46006") {
+    return "中国联通";
+  }
+  if (raw == "CTCC" || raw == "China Telecom" || raw == "CHN-CT" ||
+      raw == "46003" || raw == "46005" || raw == "46011") {
+    return "中国电信";
+  }
+  return raw;
+}
+
 void simFetchInfo() {
   {
     String resp;
@@ -347,7 +363,7 @@ void simFetchInfo() {
       int q1 = resp.indexOf('"', start);
       int q2 = (q1 >= 0) ? resp.indexOf('"', q1 + 1) : -1;
       if (q1 >= 0 && q2 > q1) {
-        s_carrier = resp.substring(q1 + 1, q2);
+        s_carrier = normalizeCarrier(resp.substring(q1 + 1, q2));
         LOG("SIM", "运营商: %s", s_carrier.c_str());
       }
     }
@@ -362,7 +378,7 @@ void simFetchInfo() {
       if (csq >= 0 && csq != 99) {
         int dbm = -113 + 2 * csq;
         char buf[24];
-        snprintf(buf, sizeof(buf), "%d (%ddBm)", csq, dbm);
+        snprintf(buf, sizeof(buf), "%ddBm", dbm);
         s_signal = String(buf);
         LOG("SIM", "信号强度: %s", s_signal.c_str());
       } else {

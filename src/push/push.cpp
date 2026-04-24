@@ -10,41 +10,51 @@
 #include <time.h>
 
 // 内部辅助：按通道配置分发单次推送（不含跳过判断）
-static bool _sendOneChannel(const PushChannel& ch, const String& sender, const String& message,
+// ctx 用于渲染 key1/key2 占位符
+static bool _sendOneChannel(const PushChannel& ch, const MessageContext& ctx,
+                             const String& sender, const String& message,
                              const String& timestamp, const String& renderedBody) {
+  // 在通道副本中渲染 key1/key2（不修改原通道配置）
+  PushChannel rendered = ch;
+  rendered.key1 = renderTemplate(ch.key1, ctx);
+  rendered.key2 = renderTemplate(ch.key2, ctx);
+
   bool ok = false;
-  switch (ch.type) {
-    case PUSH_TYPE_POST_JSON:   ok = sendPostJson(ch, sender, message, timestamp, renderedBody);    break;
-    case PUSH_TYPE_BARK:        ok = sendBark(ch, sender, message, timestamp, renderedBody);         break;
-    case PUSH_TYPE_GET:         ok = sendGet(ch, sender, message, timestamp, renderedBody);          break;
-    case PUSH_TYPE_DINGTALK:    ok = sendDingtalk(ch, sender, message, timestamp, renderedBody);     break;
-    case PUSH_TYPE_PUSHPLUS:    ok = sendPushPlus(ch, sender, message, timestamp, renderedBody);     break;
-    case PUSH_TYPE_SERVERCHAN:  ok = sendServerChan(ch, sender, message, timestamp, renderedBody);   break;
-    case PUSH_TYPE_CUSTOM:      ok = sendCustom(ch, sender, message, timestamp, renderedBody);       break;
-    case PUSH_TYPE_FEISHU:      ok = sendFeishu(ch, sender, message, timestamp, renderedBody);       break;
-    case PUSH_TYPE_GOTIFY:      ok = sendGotify(ch, sender, message, timestamp, renderedBody);       break;
-    case PUSH_TYPE_TELEGRAM:    ok = sendTelegram(ch, sender, message, timestamp, renderedBody);     break;
-    case PUSH_TYPE_WECHAT_WORK: ok = sendWechatWork(ch, sender, message, timestamp, renderedBody);   break;
-    case PUSH_TYPE_SMS:         ok = sendSmsPush(ch, sender, message, timestamp, renderedBody);      break;
+  switch (rendered.type) {
+    case PUSH_TYPE_POST_JSON:   ok = sendPostJson(rendered, sender, message, timestamp, renderedBody);    break;
+    case PUSH_TYPE_BARK:        ok = sendBark(rendered, sender, message, timestamp, renderedBody);         break;
+    case PUSH_TYPE_GET:         ok = sendGet(rendered, sender, message, timestamp, renderedBody);          break;
+    case PUSH_TYPE_DINGTALK:    ok = sendDingtalk(rendered, sender, message, timestamp, renderedBody);     break;
+    case PUSH_TYPE_PUSHPLUS:    ok = sendPushPlus(rendered, sender, message, timestamp, renderedBody);     break;
+    case PUSH_TYPE_SERVERCHAN:  ok = sendServerChan(rendered, sender, message, timestamp, renderedBody);   break;
+    case PUSH_TYPE_CUSTOM:      ok = sendCustom(rendered, sender, message, timestamp, renderedBody);       break;
+    case PUSH_TYPE_FEISHU:      ok = sendFeishu(rendered, sender, message, timestamp, renderedBody);       break;
+    case PUSH_TYPE_GOTIFY:      ok = sendGotify(rendered, sender, message, timestamp, renderedBody);       break;
+    case PUSH_TYPE_TELEGRAM:    ok = sendTelegram(rendered, sender, message, timestamp, renderedBody);     break;
+    case PUSH_TYPE_WECHAT_WORK: ok = sendWechatWork(rendered, sender, message, timestamp, renderedBody);   break;
+    case PUSH_TYPE_SMS:         ok = sendSmsPush(rendered, sender, message, timestamp, renderedBody);      break;
     default:
-      LOG("Push", "未知推送类型: %d", (int)ch.type);
+      LOG("Push", "未知推送类型: %d", (int)rendered.type);
       break;
   }
   return ok;
 }
 
 // 构建消息上下文（内部辅助）
-static MessageContext buildMsgContext(const String& sender, const String& message, const String& timestamp) {
+static MessageContext buildMsgContext(const String& sender, const String& message, const String& timestamp, const String& triggerType) {
   MessageContext ctx;
-  ctx.sender    = sender;
-  ctx.message   = message;
-  ctx.timestamp = timestamp;
-  ctx.date      = timeModuleGetDateStr();
-  ctx.deviceId  = msgContextGetDeviceId();
-  ctx.carrier   = simGetCarrier();
-  ctx.simNumber = simGetPhoneNum();
-  ctx.simSlot   = "SIM1";
-  ctx.signal    = simGetSignal();
+  ctx.from        = sender;
+  ctx.message     = message;
+  ctx.timestamp   = timestamp;
+  ctx.date        = timeModuleGetDateStr();
+  ctx.deviceId    = msgContextGetDeviceId();
+  ctx.carrier     = simGetCarrier();
+  ctx.to          = simGetPhoneNum();
+  ctx.simSlot     = "SIM1";
+  ctx.signal      = simGetSignal();
+  ctx.remark      = config.remark;
+  ctx.triggerType = triggerType;
+  ctx.uptime      = formatUptime(millis());
   return ctx;
 }
 
@@ -59,9 +69,10 @@ bool sendPushChannel(int channelIdx, const String& sender, const String& message
   if (ch.type >= PUSH_TYPE_POST_JSON && ch.type <= PUSH_TYPE_WECHAT_WORK && !wifiOk) return false;
   if (ch.type == PUSH_TYPE_SMS && msgType == MSG_TYPE_SIM) return false;
 
-  MessageContext ctx = buildMsgContext(sender, message, timestamp);
+  MessageContext ctx = buildMsgContext(sender, message, timestamp,
+    msgType == MSG_TYPE_CALL ? "来电" : msgType == MSG_TYPE_SIM ? "SIM事件" : "短信");
   String renderedBody = ch.customBody.length() > 0 ? renderTemplate(ch.customBody, ctx) : "";
-  return _sendOneChannel(ch, sender, message, timestamp, renderedBody);
+  return _sendOneChannel(ch, ctx, sender, message, timestamp, renderedBody);
 }
 
 void sendPushNotification(const String& sender, const String& message, const String& timestamp, MsgType msgType) {
@@ -82,7 +93,8 @@ void sendPushNotification(const String& sender, const String& message, const Str
   bool wifiOk = (WiFi.status() == WL_CONNECTED);
   bool anyAction = false;
 
-  MessageContext ctx = buildMsgContext(sender, message, timestamp);
+  MessageContext ctx = buildMsgContext(sender, message, timestamp,
+    msgType == MSG_TYPE_CALL ? "来电" : msgType == MSG_TYPE_SIM ? "SIM事件" : "短信");
 
   for (int i = 0; i < config.pushCount; i++) {
     const PushChannel& ch = config.pushChannels[i];
@@ -107,7 +119,7 @@ void sendPushNotification(const String& sender, const String& message, const Str
     // 渲染自定义消息格式（非空时替换内置默认格式）
     String renderedBody = ch.customBody.length() > 0 ? renderTemplate(ch.customBody, ctx) : "";
 
-    bool ok = _sendOneChannel(ch, sender, message, timestamp, renderedBody);
+    bool ok = _sendOneChannel(ch, ctx, sender, message, timestamp, renderedBody);
 
     if (config.pushStrategy == PUSH_STRATEGY_FAILOVER) {
       if (ok) {

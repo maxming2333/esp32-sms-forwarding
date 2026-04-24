@@ -93,6 +93,10 @@
             <input type="text" name="adminPhone" id="adminPhone" placeholder="13800138000">
           </div>
           <div class="form-group">
+            <label>设备备注</label>
+            <input type="text" name="remark" id="remark" maxlength="64" placeholder="（可选）用于区分多台设备">
+          </div>
+          <div class="form-group">
             <label>
               <input type="checkbox" name="simNotifyEnabled" id="simNotifyEnabled">
               SIM 事件通知（SIM 卡插入/拔出时发送邮件通知）
@@ -172,12 +176,12 @@
     var PUSH_TYPE_LABELS = {
       0: '未启用',
       1: 'POST JSON格式',
-      2: 'Bark (iOS)',
+      2: 'Bark 服务',
       3: 'GET请求',
       4: '钉钉机器人',
       5: 'PushPlus',
       6: 'Server酱',
-      7: 'POST请求',
+      7: 'POST 文本',
       8: '飞书机器人',
       9: 'Gotify',
       10: 'Telegram Bot',
@@ -231,7 +235,24 @@
           '<div class="form-group">' +
             '<label>自定义推送消息格式</label>' +
             '<textarea name="push' + i + 'body" id="body' + i + '" maxlength="512">' + escHtml(ch.customBody) + '</textarea>' +
-            '<div class="hint">不填，则使用默认格式；支持占位符：{sender} {message} {timestamp} {date} {device_id} {carrier} {sim_number} {sim_slot} {signal}</div>' +
+            '<div class="hint">不填，则使用默认格式；支持占位符：{sender} {from} {message} {timestamp} {date} {device_id} {carrier} {sim_number} {to} {sim_slot} {signal} {remark} {trigger_type} {uptime}</div>' +
+          '</div>' +
+          '<div class="placeholder-hint">' +
+            '<p><strong>支持的占位符：</strong></p>' +
+            '<ul style="margin:0;padding-left:1.2em;font-size:13px;color:#555;">' +
+              '<li><code>{remark}</code> — 设备备注（可在管理员设置中配置）</li>' +
+              '<li><code>{trigger_type}</code> — 触发类型（短信 / 来电 / 启动 / SIM事件）</li>' +
+              '<li><code>{from}</code> — 发件人号码</li>' +
+              '<li><code>{message}</code> — 短信内容</li>' +
+              '<li><code>{timestamp}</code> — Unix 秒级整数，适合机器处理</li>' +
+              '<li><code>{date}</code> — 带时区的可读时间，如 2026-04-24 10:30:00+0800</li>' +
+              '<li><code>{device_id}</code> — 设备唯一 ID</li>' +
+              '<li><code>{carrier}</code> — 运营商名称（如 中国移动）</li>' +
+              '<li><code>{to}</code> — 本机号码（SIM 卡号）</li>' +
+              '<li><code>{sim_slot}</code> — SIM 卡槽（如 SIM1）</li>' +
+              '<li><code>{signal}</code> — 信号强度（如 -73dBm）</li>' +
+              '<li><code>{uptime}</code> — 设备运行时长（如 3小时25分）</li>' +
+            '</ul>' +
           '</div>' +
           '<div class="form-group">' +
             '<input type="checkbox" id="push' + i + 'retry" name="push' + i + 'retry" value="1"' + (ch.retryOnFail ? ' checked' : '') + '>' +
@@ -384,6 +405,7 @@
       g_adminPhone = data.adminPhone || '';
       document.getElementById('webUser').value    = data.webUser    || '';
       document.getElementById('adminPhone').value = data.adminPhone  || '';
+      document.getElementById('remark').value     = data.remark      || '';
       document.getElementById('simNotifyEnabled').checked = !!data.simNotifyEnabled;
       document.getElementById('dataTrafficEnabled').checked = !!data.dataTraffic;
 

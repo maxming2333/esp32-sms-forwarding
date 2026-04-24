@@ -21,6 +21,7 @@ void wifiManagerTick();
 WiFiMode wifiManagerGetMode();
 String wifiManagerGetIP();
 String getDeviceUrl();
-String getDeviceId();  // 返回设备唯一 ID（eFuse MAC 低 32 位，8 位大写十六进制）
+String getDeviceId();    // 返回设备唯一 ID（eFuse MAC 低 32 位，8 位大写十六进制）
+String getDeviceName();  // 返回设备名称，格式：SMS-Forwarder-<DeviceId>
 
 void wifiManagerSetReconnectCallback(WifiReconnectCallback cb);

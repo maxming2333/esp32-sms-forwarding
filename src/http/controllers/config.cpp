@@ -12,6 +12,7 @@ void configController(AsyncWebServerRequest* request) {
   root["adminPhone"] = config.adminPhone;
   root["webUser"]    = config.webUser;
   // smtpPass and webPass are NEVER included (OWASP A02)
+  root["remark"]     = config.remark;
 
   root["simNotifyEnabled"] = config.simNotifyEnabled;
   root["dataTraffic"]      = config.dataTraffic;
@@ -63,6 +64,7 @@ void configExportController(AsyncWebServerRequest* request) {
   general["simNotifyEnabled"] = config.simNotifyEnabled;
   general["dataTraffic"]      = config.dataTraffic;
   general["pushStrategy"]     = (int)config.pushStrategy;
+  general["remark"]           = config.remark;
 
   // wifiList 数组（含密码，用于导出还原）
   JsonArray wifiArr = doc["wifiList"].to<JsonArray>();
@@ -228,6 +230,9 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
     config.simNotifyEnabled = g["simNotifyEnabled"] | config.simNotifyEnabled;
     config.dataTraffic       = g["dataTraffic"]      | config.dataTraffic;
     config.pushStrategy     = (PushStrategy)(g["pushStrategy"] | (int)config.pushStrategy);
+    if (g["remark"].is<const char*>()) {
+      config.remark = String(g["remark"].as<const char*>()).substring(0, 64);
+    }
   }
 
   // 新格式：wifiList 数组；向后兼容旧 wifi 单对象 → wifiList[0]

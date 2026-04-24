@@ -67,6 +67,7 @@ struct Config {
   String       blacklist[MAX_BLACKLIST_ENTRIES];
   int          blacklistCount;
   PushStrategy pushStrategy;
+  String       remark;   // 设备备注，最大 64 字符
 };
 
 struct RebootSchedule {

@@ -1,4 +1,5 @@
 #include "wifi_manager.h"
+// #include "ble/blufi_handler.h"  // BluFi BLE 配网：启用时同步移除 platformio.ini 中的 build_src_filter
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 #include "config/config.h"
@@ -21,6 +22,7 @@ static void enterAPMode() {
   WiFi.softAP("SMS-Forwarder-AP");
   s_mode = WIFI_MODE_AP_ACTIVE;
   LOG("WiFi", "AP模式启动，SSID: SMS-Forwarder-AP，IP: 192.168.4.1");
+  // blufiInit();  // BluFi BLE 配网：启用时取消此注释，并恢复上方 include
 }
 
 void wifiManagerInit() {
@@ -45,10 +47,7 @@ void wifiManagerInit() {
 
   // 设置客户端主机名（路由器 DHCP 列表中显示的名称），格式：SMS-Forwarder-XXXXXXXX
   WiFi.mode(WIFI_STA);
-  {
-    String hostname = "SMS-Forwarder-" + getDeviceId();
-    WiFi.setHostname(hostname.c_str());
-  }
+  WiFi.setHostname(getDeviceName().c_str());
 
   // 扫描所有信道以连接信号最强的 AP，防止在 mesh 组网这类场景中连接到弱 AP
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
@@ -170,6 +169,10 @@ String getDeviceId() {
   s_id.toUpperCase();
   while (s_id.length() < 8) s_id = "0" + s_id;
   return s_id;
+}
+
+String getDeviceName() {
+  return "SMS-Forwarder-" + getDeviceId();
 }
 
 void wifiManagerSetReconnectCallback(WifiReconnectCallback cb) {

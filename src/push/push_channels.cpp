@@ -87,7 +87,9 @@ bool sendBark(const PushChannel& ch, const String& sender, const String& message
   http.addHeader("Content-Type", "application/json");
 
   JsonDocument doc;
-  doc["title"] = sender;
+  // key1 已由调用方渲染，非空时作为自定义标题，否则回退到发件人号码
+  String title = ch.key1.length() > 0 ? ch.key1 : sender;
+  doc["title"] = title;
   doc["body"]  = renderedBody.length() > 0 ? renderedBody : message;
   String body;
   serializeJson(doc, body);

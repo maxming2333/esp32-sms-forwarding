@@ -21,6 +21,9 @@ void saveController(AsyncWebServerRequest* request) {
   }
 
   if (request->hasParam("adminPhone", true)) config.adminPhone = request->getParam("adminPhone", true)->value();
+  if (request->hasParam("remark", true)) {
+    config.remark = request->getParam("remark", true)->value().substring(0, 64);
+  }
 
   // checkbox：只有全量表单提交时这两个字段才有意义；
   // 用 pushCount 是否存在来判断是否为全量表单提交
