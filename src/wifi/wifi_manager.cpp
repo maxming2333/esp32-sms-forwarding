@@ -164,10 +164,14 @@ String getDeviceUrl() {
 String getDeviceId() {
   static String s_id = "";
   if (s_id.length() > 0) return s_id;
-  uint32_t low32 = (uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF);
-  s_id = String(low32, HEX);
+  uint64_t mac = ESP.getEfuseMac();
+  // 取 MAC 后三字节（byte3:byte4:byte5），保持与 MAC 地址显示顺序一致
+  uint32_t last3 = (uint32_t)(((mac >> 24) & 0xFF) << 16 |
+                               ((mac >> 32) & 0xFF) << 8  |
+                               ((mac >> 40) & 0xFF));
+  s_id = String(last3, HEX);
   s_id.toUpperCase();
-  while (s_id.length() < 8) s_id = "0" + s_id;
+  while (s_id.length() < 6) s_id = "0" + s_id;
   return s_id;
 }
 
