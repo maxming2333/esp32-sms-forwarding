@@ -15,13 +15,28 @@ import os
 import subprocess
 import sys
 
+try:
+    import minify_html
+    _has_minify_html = True
+except ImportError:
+    print("[upload_littlefs] 📦 'minify_html' not found, installing automatically...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "minify_html"])
+        import minify_html
+        _has_minify_html = True
+        print("[upload_littlefs] ✅ 'minify_html' installed successfully.")
+    except Exception as exc:
+        print("[upload_littlefs] ⚠️  failed to install 'minify_html': %s" % exc)
+        print("[upload_littlefs]     HTML will not be minified. Run: pip install minify_html")
+        _has_minify_html = False
+
 
 def _upload_littlefs(source, target, env):
     project_dir = env.subst("$PROJECT_DIR")
     data_dir = os.path.join(project_dir, "data")
 
     if not os.path.isdir(data_dir):
-        print("[LittleFS] data/ directory not found, skipping filesystem upload")
+        print("[upload_littlefs] ⚠️  data/ directory not found, skipping filesystem upload")
         return
 
     # Step 1: Compress every non-gz file in data/ and remove the original.
@@ -34,17 +49,36 @@ def _upload_littlefs(source, target, env):
         with open(fpath, "rb") as f:
             content = f.read()
         originals[fname] = content
+
+        # Minify HTML (including inline JS/CSS) before compression.
+        data_to_compress = content
+        if fname.endswith(".html") and _has_minify_html:
+            try:
+                minified = minify_html.minify(
+                    content.decode("utf-8"),
+                    minify_js=True,
+                    minify_css=True,
+                    remove_processing_instructions=True,
+                ).encode("utf-8")
+                print(
+                    "[upload_littlefs] 🗜️  minified  %s  (%d -> %d bytes)"
+                    % (fname, len(data_to_compress), len(minified))
+                )
+                data_to_compress = minified
+            except Exception as exc:
+                print("[upload_littlefs] ⚠️  minify failed for %s: %s" % (fname, exc))
+
         gz_path = fpath + ".gz"
         with gzip.open(gz_path, "wb") as gf:
-            gf.write(content)
+            gf.write(data_to_compress)
         os.remove(fpath)
         print(
-            "[LittleFS] Compressed %s -> %s.gz  (%d -> %d bytes)"
-            % (fname, fname, len(content), os.path.getsize(gz_path))
+            "[upload_littlefs] 📦 gzipped  %s -> %s.gz  (%d -> %d bytes)"
+            % (fname, fname, len(data_to_compress), os.path.getsize(gz_path))
         )
 
     # Step 2: Upload LittleFS (only .gz files are present now).
-    print("\n[LittleFS] Uploading filesystem image...")
+    print("\n[upload_littlefs] 🚀 uploading filesystem image...")
     ret = 1
     try:
         ret = subprocess.call(
@@ -65,12 +99,12 @@ def _upload_littlefs(source, target, env):
                 os.remove(gz_path)
             with open(fpath, "wb") as f:
                 f.write(content)
-        print("[LittleFS] Original files restored")
+        print("[upload_littlefs] 🔄 original files restored")
 
     if ret == 0:
-        print("[LittleFS] Filesystem upload OK")
+        print("[upload_littlefs] ✅ filesystem upload OK")
     else:
-        print("[LittleFS] WARNING: filesystem upload failed (code %d)" % ret)
+        print("[upload_littlefs] ⚠️  filesystem upload failed (code %d)" % ret)
 
 
 env.AddPostAction("upload", _upload_littlefs)  # noqa: F821

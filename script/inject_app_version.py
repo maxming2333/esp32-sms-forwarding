@@ -15,7 +15,7 @@ if not app_version:
         prefix = "v1"
     if not prefix:
         prefix = "unknown"
-        print("[inject_app_version] [WARN] VERSION file is empty, using 'unknown'")
+        print("[inject_app_version] ⚠️  VERSION file is empty, using 'unknown'")
     if not prefix.lower().startswith("v"):
         prefix = "v" + prefix
     try:
@@ -26,7 +26,7 @@ if not app_version:
         app_version = f"{prefix}-{sha}"
     except Exception:
         app_version = f"{prefix}-local"
-        print("[inject_app_version] [WARN] git not available, using '-local' suffix")
+        print("[inject_app_version] ⚠️  git not available, using '-local' suffix")
 
 # --- APP_BUILD_DATE / APP_BUILD_TIME ---
 ts = os.environ.get("APP_BUILD_TIMESTAMP", "").strip()
@@ -35,7 +35,7 @@ if ts and len(ts) >= 15 and ts[8] == 'T':
     app_build_time = f"{ts[9:11]}:{ts[11:13]}:{ts[13:15]}"
 else:
     if ts:
-        print(f"[inject_app_version] [WARN] APP_BUILD_TIMESTAMP format invalid: '{ts}', using CST now")
+        print(f"[inject_app_version] ⚠️  APP_BUILD_TIMESTAMP format invalid: '{ts}', using CST now")
     now = datetime.now(timezone(timedelta(hours=8)))
     app_build_date = now.strftime("%Y-%m-%d")
     app_build_time = now.strftime("%H:%M:%S")
@@ -47,6 +47,6 @@ env.Append(CPPDEFINES=[
     ("APP_BUILD_TIME", '\\"' + app_build_time + '\\"'),
 ])
 
-print(f"[inject_app_version] APP_VERSION={app_version}")
-print(f"[inject_app_version] APP_BUILD_DATE={app_build_date}")
-print(f"[inject_app_version] APP_BUILD_TIME={app_build_time}")
+print(f"[inject_app_version] 🏷️  APP_VERSION={app_version}")
+print(f"[inject_app_version] 📅 APP_BUILD_DATE={app_build_date}")
+print(f"[inject_app_version] 🕐 APP_BUILD_TIME={app_build_time}")
