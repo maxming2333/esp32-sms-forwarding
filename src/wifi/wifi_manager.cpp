@@ -8,6 +8,7 @@
 static WiFiMode s_mode = WIFI_MODE_UNINITIALIZED;
 
 static bool                  s_everConnected = false;
+static bool                  s_initDone      = false;  // 初始化完成标志：STA 获取到 IP 或已进入 AP 模式
 static WifiReconnectCallback s_reconnectCb   = nullptr;
 
 // 轮询重连状态机
@@ -20,7 +21,8 @@ static unsigned long s_lastAttemptMs = 0;
 
 static void enterAPMode() {
   WiFi.softAP("SMS-Forwarder-AP");
-  s_mode = WIFI_MODE_AP_ACTIVE;
+  s_mode    = WIFI_MODE_AP_ACTIVE;
+  s_initDone = true;
   LOG("WiFi", "AP模式启动，SSID: SMS-Forwarder-AP，IP: 192.168.4.1");
   // blufiInit();  // BluFi BLE 配网：启用时取消此注释，并恢复上方 include
 }
@@ -32,6 +34,7 @@ void wifiManagerInit() {
   s_reconnAttempt = 0;
   s_lastAttemptMs = 0;
   s_everConnected = false;
+  s_initDone      = false;
 
   // 软重启（ESP.restart）后 WiFi 驱动状态可能残留，强制关闭后再初始化
   WiFi.disconnect(true);
@@ -64,8 +67,9 @@ void wifiManagerInit() {
       unsigned long start = millis();
       while (millis() - start < 3000) {
         if (WiFi.status() == WL_CONNECTED) {
-          s_mode = WIFI_MODE_STA_CONNECTED;
+          s_mode          = WIFI_MODE_STA_CONNECTED;
           s_everConnected = true;
+          s_initDone      = true;
           WiFi.setSleep(false);  // 关闭 WiFi Modem Sleep，避免 TCP SYN 丢包导致 3 秒连接延迟
           LOG("WiFi", "第 %d/%d 条WiFi第 %d/%d 次连接成功，IP: %s", w + 1, config.wifiCount, attempt, WIFI_RECONNECT_ATTEMPTS_PER_SSID, WiFi.localIP().toString().c_str());
           return;
@@ -148,6 +152,10 @@ void wifiManagerTick() {
 
 WiFiMode wifiManagerGetMode() {
   return s_mode;
+}
+
+bool wifiManagerIsInitDone() {
+  return s_initDone;
 }
 
 String wifiManagerGetIP() {

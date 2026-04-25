@@ -95,14 +95,10 @@ bool sendPushChannel(int channelIdx, const String& sender, const String& message
 
 void sendPushNotification(const String& sender, const String& message, const String& timestamp, MsgType msgType) {
   // T015: 推送前检查本机号码是否就绪
+  // 入队整条推送链，待号码就绪后重新完整执行，确保故障转移策略正确生效
   if (!simIsNumberReady()) {
-    LOG("Push", "本机号码未知，所有通道入队等待号码就绪");
-    for (int i = 0; i < config.pushCount; i++) {
-      const PushChannel& ch = config.pushChannels[i];
-      if (!isPushChannelValid(ch)) continue;
-      if (ch.type == PUSH_TYPE_SMS && msgType == MSG_TYPE_SIM) continue;
-      pushRetryEnqueue(i, sender, message, timestamp, msgType, RetryReason::WAITING_NUMBER);
-    }
+    LOG("Push", "本机号码未知，完整推送链入队等待号码就绪");
+    pushRetryEnqueue(PUSH_RETRY_FULL_CHAIN, sender, message, timestamp, msgType, RetryReason::WAITING_NUMBER);
     return;
   }
 
@@ -110,6 +106,12 @@ void sendPushNotification(const String& sender, const String& message, const Str
 
   bool wifiOk = (WiFi.status() == WL_CONNECTED);
   bool anyAction = false;
+
+  // 故障转移模式：收集失败通道，仅在整链全部失败时才入队重试，
+  // 防止某后续通道成功后仍触发已入队的前序通道二次推送。
+  int  failoverRetry[MAX_PUSH_CHANNELS];
+  int  failoverRetryCount = 0;
+  bool failoverChainDone  = false;  // true = 已有通道成功并 break
 
   MessageContext ctx = buildMsgContext(sender, message, timestamp,
     msgType == MSG_TYPE_CALL ? "来电" : msgType == MSG_TYPE_SIM ? "SIM事件" : "短信");
@@ -144,18 +146,30 @@ void sendPushNotification(const String& sender, const String& message, const Str
     if (config.pushStrategy == PUSH_STRATEGY_FAILOVER) {
       if (ok) {
         LOG("Push", "故障转移模式：通道 %s 成功，停止", name.c_str());
+        failoverChainDone = true;
         break;
       }
       LOG("Push", "故障转移模式：通道 %s 失败，继续下一个", name.c_str());
+      // 暂存待重试索引，等整链确认全部失败后再统一入队
+      if (ch.retryOnFail && failoverRetryCount < MAX_PUSH_CHANNELS) {
+        failoverRetry[failoverRetryCount++] = i;
+      }
     } else {
       // 广播模式：继续所有通道
       delay(100);
+      if (!ok && ch.retryOnFail) {
+        pushRetryEnqueue(i, sender, message, timestamp, msgType);
+        LOG("Push", "[Retry] 通道 %s 失败，已加入重试队列", name.c_str());
+      }
     }
+  }
 
-    // 失败且开启重试时入队
-    if (!ok && ch.retryOnFail) {
-      pushRetryEnqueue(i, sender, message, timestamp, msgType);
-      LOG("Push", "[Retry] 通道 %s 失败，已加入重试队列", name.c_str());
+  // 故障转移模式：只有整链全部失败时才入队重试
+  if (config.pushStrategy == PUSH_STRATEGY_FAILOVER && !failoverChainDone) {
+    for (int j = 0; j < failoverRetryCount; j++) {
+      pushRetryEnqueue(failoverRetry[j], sender, message, timestamp, msgType);
+      const String& rname = config.pushChannels[failoverRetry[j]].name;
+      LOG("Push", "[Retry] 故障转移链全部失败，通道 %s 加入重试队列", rname.c_str());
     }
   }
 

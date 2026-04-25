@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <ArduinoJson.h>
 
 // 推送通道类型
 enum PushType {
@@ -89,3 +90,8 @@ void saveRebootSchedule(const RebootSchedule& sched);
 void rebootTick();
 bool isPushChannelValid(const PushChannel& ch);
 bool isConfigValid();
+
+// JSON 序列化 / 反序列化（供导出和导入控制器共用）
+// 新增或修改 Config / RebootSchedule 字段时只需更新这两个函数即可。
+void configToJson(JsonDocument& doc);
+void configFromJson(JsonDocument& doc);

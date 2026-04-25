@@ -5,6 +5,9 @@
 // 推送重试队列上限（超出时丢弃最旧条目）
 constexpr int PUSH_RETRY_QUEUE_MAX = 50;
 
+// 特殊通道索引：代表整条推送链（重新完整执行 sendPushNotification）
+constexpr int PUSH_RETRY_FULL_CHAIN = -1;
+
 // 重试间隔（毫秒）
 constexpr unsigned long PUSH_RETRY_INTERVAL_MS = 5000;
 

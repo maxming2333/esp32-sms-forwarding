@@ -26,6 +26,14 @@ AsyncWebServer server(80);
 // 记录 SIM 信息是否已抓取（在 loop 中 SIM_READY 后执行一次）
 static bool s_simInfoFetched = false;
 
+// 开机推送：检测到 WiFi 初始化完成后延迟 BOOT_PUSH_DELAY_MS 触发
+static bool          s_bootPushPending    = false;
+static unsigned long s_bootPushAfterMs   = 0;
+static bool          s_wifiInitWasSeen   = false;  // 已观测到初始化完成，防止重复触发
+
+// WiFi 初始化完成（STA 连上或进入 AP 模式）后，等待此时长再发送开机推送通知
+constexpr unsigned long BOOT_PUSH_DELAY_MS = 3000;
+
 // ---------- helpers ----------
 
 static void blinkShort(unsigned long gap = 500) {
@@ -121,11 +129,7 @@ void setup() {
   simStartReaderTask();
 
   digitalWrite(LED_BUILTIN, LOW);
-
-  if (wifiManagerGetMode() == WIFI_MODE_STA_CONNECTED && isConfigValid()) {
-    LOG("WiFi", "配置有效，发送启动通知...");
-    sendPushNotification("设备", "设备已启动\n设备地址: " + getDeviceUrl(), timeModuleGetDateStr(), MSG_TYPE_SIM);
-  }
+  // 开机推送在 loop() 中检测 wifiManagerIsInitDone() 上升沿后自动安排
 }
 
 void loop() {
@@ -136,6 +140,25 @@ void loop() {
       LOG("HTTP", "⚠️ 当前号码: %s，请访问 %s 进行配置", simGetPhoneNum().c_str(), getDeviceUrl().c_str());
     }
   }
+
+  // 开机推送：首次检测到 WiFi 初始化完成（STA 获取到 IP 或进入 AP 模式）后
+  // 延迟 BOOT_PUSH_DELAY_MS 再触发，确保网络栈已就绪
+  if (!s_wifiInitWasSeen && wifiManagerIsInitDone()) {
+    s_wifiInitWasSeen = true;
+    if (isConfigValid()) {
+      s_bootPushPending = true;
+      s_bootPushAfterMs = millis() + BOOT_PUSH_DELAY_MS;
+      LOG("Push", "WiFi初始化完成，%lu ms 后触发开机推送", BOOT_PUSH_DELAY_MS);
+    }
+  }
+
+  // 开机推送：WiFi 初始化后 3 秒延迟触发，不依赖 WiFi 连接状态
+  if (s_bootPushPending && millis() >= s_bootPushAfterMs) {
+    s_bootPushPending = false;
+    LOG("Push", "触发开机推送...");
+    sendPushNotification("设备", "设备已启动\n设备地址: " + getDeviceUrl(), timeModuleGetDateStr(), MSG_TYPE_SIM);
+  }
+
   checkConcatTimeout();
   callTick();
   simTick();

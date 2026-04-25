@@ -1,5 +1,6 @@
 #include "config.h"
 #include <Preferences.h>
+#include <ArduinoJson.h>
 #include "logger.h"
 #include <time.h>
 
@@ -261,4 +262,128 @@ bool isConfigValid() {
     }
   }
   return false;
+}
+
+// ── configToJson ─────────────────────────────────────────────
+// 将全局 config / rebootSchedule 序列化为嵌套 JSON（新格式）。
+// ⚡ 新增/修改 Config 或 RebootSchedule 字段时，只需在此函数和 configFromJson 中
+//    同步修改，导出和导入会自动保持一致，无需分别改两个 HTTP 控制器。
+void configToJson(JsonDocument& doc) {
+  JsonObject general          = doc["general"].to<JsonObject>();
+  general["adminPhone"]       = config.adminPhone;
+  general["webUser"]          = config.webUser;
+  general["webPass"]          = config.webPass;
+  general["simNotifyEnabled"] = config.simNotifyEnabled;
+  general["dataTraffic"]      = config.dataTraffic;
+  general["pushStrategy"]     = (int)config.pushStrategy;
+  general["remark"]           = config.remark;
+
+  JsonArray wifiArr = doc["wifiList"].to<JsonArray>();
+  for (int i = 0; i < config.wifiCount; i++) {
+    JsonObject we = wifiArr.add<JsonObject>();
+    we["ssid"] = config.wifiList[i].ssid;
+    we["pass"] = config.wifiList[i].password;
+  }
+
+  JsonArray channels = doc["pushChannels"].to<JsonArray>();
+  for (int i = 0; i < config.pushCount; i++) {
+    JsonObject ch     = channels.add<JsonObject>();
+    ch["enabled"]     = config.pushChannels[i].enabled;
+    ch["type"]        = (int)config.pushChannels[i].type;
+    ch["name"]        = config.pushChannels[i].name;
+    ch["url"]         = config.pushChannels[i].url;
+    ch["key1"]        = config.pushChannels[i].key1;
+    ch["key2"]        = config.pushChannels[i].key2;
+    ch["customBody"]  = config.pushChannels[i].customBody;
+    ch["retryOnFail"] = config.pushChannels[i].retryOnFail;
+  }
+
+  JsonArray bl = doc["blacklist"].to<JsonArray>();
+  for (int i = 0; i < config.blacklistCount; i++) {
+    bl.add(config.blacklist[i]);
+  }
+
+  JsonObject reboot   = doc["reboot"].to<JsonObject>();
+  reboot["enabled"]   = rebootSchedule.enabled;
+  reboot["mode"]      = (int)rebootSchedule.mode;
+  reboot["hour"]      = (int)rebootSchedule.hour;
+  reboot["minute"]    = (int)rebootSchedule.minute;
+  reboot["intervalH"] = (int)rebootSchedule.intervalH;
+}
+
+// ── configFromJson ────────────────────────────────────────────
+// 将新格式 JSON 中的各节反序列化到全局 config / rebootSchedule。
+// 仅处理存在的节（缺失的节保持当前值不变）。
+// 注意：调用方应在调用前完成数组长度校验（返回 HTTP 4xx 后不应再调用此函数）。
+void configFromJson(JsonDocument& doc) {
+  if (doc["general"].is<JsonObject>()) {
+    JsonObject g            = doc["general"].as<JsonObject>();
+    config.adminPhone       = g["adminPhone"]       | config.adminPhone;
+    config.webUser          = g["webUser"]          | config.webUser;
+    config.webPass          = g["webPass"]          | config.webPass;
+    config.simNotifyEnabled = g["simNotifyEnabled"] | config.simNotifyEnabled;
+    config.dataTraffic      = g["dataTraffic"]      | config.dataTraffic;
+    config.pushStrategy     = (PushStrategy)(g["pushStrategy"] | (int)config.pushStrategy);
+    if (g["remark"].is<const char*>()) {
+      config.remark = String(g["remark"].as<const char*>()).substring(0, 64);
+    }
+  }
+
+  if (doc["wifiList"].is<JsonArray>()) {
+    JsonArray wArr  = doc["wifiList"].as<JsonArray>();
+    int wCount = 0;
+    for (JsonVariant v : wArr) {
+      if (!v.is<JsonObject>()) continue;
+      if (wCount >= MAX_WIFI_ENTRIES) break;
+      JsonObject we = v.as<JsonObject>();
+      String ssid = we["ssid"] | String("");
+      if (ssid.length() == 0) continue;
+      config.wifiList[wCount].ssid     = ssid;
+      config.wifiList[wCount].password = we["pass"] | we["password"] | String("");
+      wCount++;
+    }
+    config.wifiCount = wCount;
+  }
+
+  if (doc["pushChannels"].is<JsonArray>()) {
+    JsonArray arr = doc["pushChannels"].as<JsonArray>();
+    int i = 0;
+    for (JsonObject ch : arr) {
+      if (i >= MAX_PUSH_CHANNELS) break;
+      config.pushChannels[i].enabled    = ch["enabled"]    | config.pushChannels[i].enabled;
+      config.pushChannels[i].type       = (PushType)(ch["type"] | (int)config.pushChannels[i].type);
+      config.pushChannels[i].name       = ch["name"]       | config.pushChannels[i].name;
+      config.pushChannels[i].url        = ch["url"]        | config.pushChannels[i].url;
+      config.pushChannels[i].key1       = ch["key1"]       | config.pushChannels[i].key1;
+      config.pushChannels[i].key2       = ch["key2"]       | config.pushChannels[i].key2;
+      config.pushChannels[i].retryOnFail = ch["retryOnFail"] | config.pushChannels[i].retryOnFail;
+      // 向后兼容：customFormat → customBody
+      if (ch["customBody"].is<const char*>()) {
+        config.pushChannels[i].customBody = ch["customBody"].as<String>();
+      } else if (ch["customFormat"].is<const char*>()) {
+        config.pushChannels[i].customBody = ch["customFormat"].as<String>();
+      }
+      i++;
+    }
+    config.pushCount = i;
+  }
+
+  if (doc["blacklist"].is<JsonArray>()) {
+    JsonArray arr = doc["blacklist"].as<JsonArray>();
+    int count = 0;
+    for (JsonVariant v : arr) {
+      if (count >= MAX_BLACKLIST_ENTRIES) break;
+      config.blacklist[count++] = v.as<String>();
+    }
+    config.blacklistCount = count;
+  }
+
+  if (doc["reboot"].is<JsonObject>()) {
+    JsonObject r         = doc["reboot"].as<JsonObject>();
+    rebootSchedule.enabled   = r["enabled"]   | rebootSchedule.enabled;
+    rebootSchedule.mode      = r["mode"]       | rebootSchedule.mode;
+    rebootSchedule.hour      = r["hour"]       | rebootSchedule.hour;
+    rebootSchedule.minute    = r["minute"]     | rebootSchedule.minute;
+    rebootSchedule.intervalH = r["intervalH"]  | rebootSchedule.intervalH;
+  }
 }

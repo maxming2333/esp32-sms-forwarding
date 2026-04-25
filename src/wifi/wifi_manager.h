@@ -19,6 +19,7 @@ typedef void (*WifiReconnectCallback)();
 void wifiManagerInit();
 void wifiManagerTick();
 WiFiMode wifiManagerGetMode();
+bool wifiManagerIsInitDone();  // STA 获取到 IP 或已进入 AP 模式时返回 true
 String wifiManagerGetIP();
 String getDeviceUrl();
 String getDeviceId();    // 返回设备唯一 ID（eFuse MAC 低 32 位，8 位大写十六进制）
