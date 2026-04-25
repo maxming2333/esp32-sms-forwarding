@@ -51,14 +51,16 @@ static void blufiEventCallback(esp_blufi_cb_event_t event, esp_blufi_cb_param_t*
   switch (event) {
     case ESP_BLUFI_EVENT_RECV_STA_SSID: {
       if (param->sta_ssid.ssid && param->sta_ssid.ssid_len > 0) {
-        s_pendingSsid = String((const char*)param->sta_ssid.ssid).substring(0, param->sta_ssid.ssid_len);
+        // ssid 不含 null 终止符，必须用带长度的构造函数
+        s_pendingSsid = String((const char*)param->sta_ssid.ssid, param->sta_ssid.ssid_len);
         LOG("BluFi", "收到 SSID: %s", s_pendingSsid.c_str());
       }
       break;
     }
     case ESP_BLUFI_EVENT_RECV_STA_PASSWD: {
       if (param->sta_passwd.passwd && param->sta_passwd.passwd_len > 0) {
-        s_pendingPass = String((const char*)param->sta_passwd.passwd).substring(0, param->sta_passwd.passwd_len);
+        // passwd 同样不含 null 终止符
+        s_pendingPass = String((const char*)param->sta_passwd.passwd, param->sta_passwd.passwd_len);
         LOG("BluFi", "收到密码（已隐藏）");
       }
       break;
@@ -72,14 +74,15 @@ static void blufiEventCallback(esp_blufi_cb_event_t event, esp_blufi_cb_param_t*
   }
 
   // 当 SSID 和密码均已收到时写入配置并重启
-  if (s_pendingSsid.length() > 0
-      && (event == ESP_BLUFI_EVENT_RECV_STA_PASSWD || event == ESP_BLUFI_EVENT_RECV_STA_SSID)) {
+  // 必须等 PASSWD 事件到达后才触发，避免在仅收到 SSID 时以空密码重启
+  if (event == ESP_BLUFI_EVENT_RECV_STA_PASSWD && s_pendingSsid.length() > 0) {
     esp_blufi_extra_info_t info;
     memset(&info, 0, sizeof(info));
     esp_blufi_send_wifi_conn_report(WIFI_MODE_STA, ESP_BLUFI_STA_CONN_SUCCESS, 0, &info);
     insertWifiFirst(s_pendingSsid, s_pendingPass);
     s_pendingSsid = "";
     s_pendingPass = "";
+    blufiDeinit();  // 释放 BLE 资源，避免重启后与 WiFi 射频竞争
     delay(500);
     ESP.restart();
   }
@@ -120,7 +123,14 @@ void blufiInit() {
   esp_ble_gap_set_device_name(name.c_str());
 
   // 注册 BluFi 回调
-  err = esp_blufi_register_callbacks((esp_blufi_callbacks_t*)blufiEventCallback);
+  static const esp_blufi_callbacks_t blufiCallbacks = {
+    .event_cb              = blufiEventCallback,
+    .negotiate_data_handler = nullptr,
+    .encrypt_func          = nullptr,
+    .decrypt_func          = nullptr,
+    .checksum_func         = nullptr,
+  };
+  err = esp_blufi_register_callbacks(&blufiCallbacks);
   if (err != ESP_OK) {
     LOG("BluFi", "回调注册失败: %d", (int)err);
     return;
@@ -146,7 +156,12 @@ void blufiDeinit() {
   if (!s_blufiInitialized) {
     return;
   }
+  // 必须按初始化的逆序完整释放，否则 BLE 射频不会关闭，影响 WiFi 共存
   esp_blufi_profile_deinit();
+  esp_bluedroid_disable();
+  esp_bluedroid_deinit();
+  esp_bt_controller_disable();
+  esp_bt_controller_deinit();
   s_blufiInitialized = false;
   LOG("BluFi", "BluFi 已关闭");
 }
