@@ -82,8 +82,11 @@ void wifiManagerInit() {
       }
 
       LOG("WiFi", "第 %d/%d 条WiFi，第 %d/%d 次连接超时", w + 1, config.wifiCount, attempt, WIFI_RECONNECT_ATTEMPTS_PER_SSID);
-      WiFi.disconnect(true);
-      delay(300);
+      // disconnect(false)：只断开 AP 连接，保持 STA 模式开启
+      // 避免 disconnect(true) 关掉 STA 后 begin() 的 enableSTA(true) 触发
+      // ESP_ERR_WIFI_STATE（0x3014）"STA enable failed!" 的驱动状态竞争
+      WiFi.disconnect(false);
+      delay(500);
       esp_task_wdt_reset();
     }
   }
