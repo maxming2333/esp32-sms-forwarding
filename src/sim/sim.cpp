@@ -424,6 +424,7 @@ static void onUrc(SimUrcType type, const String& line) {
 // ---------- simStartReaderTask ----------
 
 void simStartReaderTask() {
+  smsStartProcTask();          // 先启动 sms_proc 任务和队列
   simRegisterUrcCallback(onUrc);
   simDispatcherStart();
   LOG("SIM", "SIM reader task 已启动");

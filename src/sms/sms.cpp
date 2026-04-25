@@ -7,6 +7,28 @@
 #include <pdulib.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
+
+// ---------- SMS 处理任务配置 ----------
+
+// PDU 队列深度：SIM 模组 CNMI=2,2 模式下 AT URIs 每条短信最多缓冲 5 段，
+// 队列容量 16 足以应对突发的多条长短信
+static constexpr int  SMS_QUEUE_DEPTH      = 16;
+// sms_proc 任务栈：包含 pdulib decode（gsm7bit[160]），多次 LOG（char msg[256] 各一帧），
+// 以及 assembleConcatSms/sendPushNotification 等，分配 8192 字节留足余量
+static constexpr int  SMS_PROC_TASK_STACK  = 8192;
+static constexpr int  SMS_PROC_TASK_PRIO   = 2;
+
+// PDU 字符串最大长度（SIM 模组单条 PDU hex 串最长 ~340 字符）
+static constexpr int  PDU_MAX_LEN          = 400;
+
+struct PduQueueItem {
+    char pdu[PDU_MAX_LEN + 1];
+};
+
+static QueueHandle_t s_pduQueue = nullptr;
 
 static PDU pdu = PDU(4096);
 static ConcatSms concatBuffer[MAX_CONCAT_MESSAGES];
@@ -381,7 +403,44 @@ void smsHandleCMTHeader() {
 }
 
 void smsHandlePDU(const String& line) {
-  processPduLine(line);
+  // 仅入队，立即返回，不在 sim_reader 任务栈上执行任何解码逻辑
+  if (s_pduQueue == nullptr) return;
+  if (line.length() > PDU_MAX_LEN) {
+    LOG("SMS", "PDU 数据行过长（%u），丢弃", (unsigned)line.length());
+    return;
+  }
+  PduQueueItem* item = new PduQueueItem();
+  if (!item) { LOG("SMS", "PDU 队列项分配失败"); return; }
+  strncpy(item->pdu, line.c_str(), PDU_MAX_LEN);
+  item->pdu[PDU_MAX_LEN] = '\0';
+  BaseType_t sent = xQueueSend(s_pduQueue, &item, 0);
+  if (sent != pdTRUE) {
+    delete item;
+    LOG("SMS", "PDU 队列已满，丢弃");
+  }
+}
+
+// ---------- sms_proc 任务 ----------
+
+static void smsProcTask(void*) {
+  for (;;) {
+    PduQueueItem* item = nullptr;
+    if (xQueueReceive(s_pduQueue, &item, portMAX_DELAY) == pdTRUE && item != nullptr) {
+      processPduLine(String(item->pdu));
+      delete item;
+    }
+    esp_task_wdt_reset();
+  }
+}
+
+void smsStartProcTask() {
+  s_pduQueue = xQueueCreate(SMS_QUEUE_DEPTH, sizeof(PduQueueItem*));
+  if (!s_pduQueue) {
+    LOG("SMS", "PDU 队列创建失败");
+    return;
+  }
+  xTaskCreate(smsProcTask, "sms_proc", SMS_PROC_TASK_STACK,
+              nullptr, SMS_PROC_TASK_PRIO, nullptr);
 }
 
 void checkConcatTimeout() {

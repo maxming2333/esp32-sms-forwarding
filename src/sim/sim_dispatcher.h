@@ -35,7 +35,9 @@
 /** FreeRTOS 队列最大深度（条数）。超出时 simSendCommand() 立即返回 false。 */
 constexpr int SIM_CMD_QUEUE_SIZE = 16;
 
-/** SIM reader task 栈大小（字节）。 */
+/** SIM reader task 栈大小（字节）。
+ *  reader task 只负责 Serial1 读取和 URC 入队，SMS 解码已卸载到 sms_proc 任务，
+ *  栈用量固定（不随 SMS 长度增长），4096 字节足够。 */
 constexpr uint32_t SIM_READER_TASK_STACK = 4096;
 
 /** SIM reader task FreeRTOS 优先级（高于 loop() 的优先级 1）。 */
