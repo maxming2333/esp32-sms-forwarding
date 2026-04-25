@@ -104,14 +104,14 @@ jobs:
             0x0      "${BUILD_DIR}/bootloader.bin" \
             0x8000   "${BUILD_DIR}/partitions.bin" \
             0x10000  "${BUILD_DIR}/firmware.bin" \
-            0x290000 "${BUILD_DIR}/littlefs.bin"
+            0x3B0000 "${BUILD_DIR}/littlefs.bin"
           # update-{VERSION_TAG}.bin: 升级用（从 0x10000 开始，跳过 NVS，保留 WiFi 等配置）
           esptool --chip esp32c3 merge_bin \
             --flash_mode keep --flash_freq keep --flash_size 4MB \
             --target-offset 0x10000 \
             -o "${BUILD_DIR}/update-${VERSION_TAG}.bin" \
             0x10000  "${BUILD_DIR}/firmware.bin" \
-            0x290000 "${BUILD_DIR}/littlefs.bin"
+            0x3B0000 "${BUILD_DIR}/littlefs.bin"
           # littlefs-{VERSION_TAG}.bin: 单独保存 LittleFS 镜像
           cp "${BUILD_DIR}/littlefs.bin" "${BUILD_DIR}/littlefs-${VERSION_TAG}.bin"
           # ota-{VERSION_TAG}.bin: 仅应用分区（firmware.bin），用于设备 OTA 在线升级
@@ -140,7 +140,7 @@ jobs:
           |--------|------|----------|
           | full-${VERSION_TAG}.bin | 首次安装（含 bootloader + Web UI，**会清空所有配置**） | \`0x0\` |
           | update-${VERSION_TAG}.bin | 固件升级（**保留 WiFi 等配置**，含 Web UI） | \`0x10000\` |
-          | littlefs-${VERSION_TAG}.bin | 单独更新 Web UI 文件系统 | \`0x290000\` |
+          | littlefs-${VERSION_TAG}.bin | 单独更新 Web UI 文件系统 | \`0x3B0000\` |
           | ota-${VERSION_TAG}.bin | 设备 OTA 在线升级专用（仅应用分区） | OTA 分区 |
 
           ## 烧录说明
@@ -184,7 +184,7 @@ jobs:
 
           **仅更新 Web UI**（保留固件和配置）：
           \`\`\`bash
-          esptool --chip esp32c3 --baud 921600 write_flash 0x290000 littlefs-${VERSION_TAG}.bin
+          esptool --chip esp32c3 --baud 921600 write_flash 0x3B0000 littlefs-${VERSION_TAG}.bin
           \`\`\`
 
           ## SHA256 校验
