@@ -123,7 +123,7 @@ void blufiInit() {
   esp_ble_gap_set_device_name(name.c_str());
 
   // 注册 BluFi 回调
-  static const esp_blufi_callbacks_t blufiCallbacks = {
+  static esp_blufi_callbacks_t blufiCallbacks = {
     .event_cb              = blufiEventCallback,
     .negotiate_data_handler = nullptr,
     .encrypt_func          = nullptr,
