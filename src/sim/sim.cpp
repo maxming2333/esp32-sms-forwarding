@@ -68,6 +68,8 @@ static bool runInitStep(const char* cmd, unsigned long timeout, int maxRetry, co
       return true;
     }
     LOG("SIM", "%s 失败，重试 %d/%d", stepName, i + 1, maxRetry);
+    delay(300);
+    esp_task_wdt_reset();
   }
   LOG("SIM", "%s 最终失败", stepName);
   return false;
@@ -176,7 +178,7 @@ static bool runNetworkWait() {
     // 每次失败后等待 2 秒再重试，分段喂狗避免 TWDT 触发
     unsigned long waitStart = millis();
     while (millis() - waitStart < 2000) {
-      delay(100);
+      delay(300);
       esp_task_wdt_reset();
     }
   }
@@ -226,7 +228,7 @@ void simInit() {
   sendATandWaitOK("AT+CFUN=1", 3000);
   LOG("SIM", "射频已恢复 (CFUN=1)");
 
-  delay(200);
+  delay(300);
 
   // 步骤2: 查询本机号码（AT+CNUM 读 SIM 卡 EF 文件，不需要射频）
   {
