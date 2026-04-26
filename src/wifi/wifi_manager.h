@@ -12,6 +12,8 @@ enum WiFiMode {
 // WiFi 重连常量
 constexpr int WIFI_RECONNECT_ATTEMPTS_PER_SSID = 5;
 constexpr unsigned long WIFI_RECONNECT_INTERVAL_MS = 5000;
+// AP 模式下后台 WiFi 扫描间隔（业界标准 30s，与 Android 后台扫描一致）
+constexpr unsigned long WIFI_AP_RESCAN_INTERVAL_MS = 30000;
 
 // 重连成功回调类型
 typedef void (*WifiReconnectCallback)();
