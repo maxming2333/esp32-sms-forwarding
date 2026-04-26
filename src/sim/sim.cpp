@@ -339,16 +339,18 @@ void simTick() {
 // ---------- simFetchInfo ----------
 
 static String normalizeCarrier(const String& raw) {
-  if (raw == "CMCC" || raw == "China Mobile" || raw == "46000" ||
-      raw == "46002" || raw == "46007") {
+  String lower = raw;
+  lower.toLowerCase();
+  if (lower == "cmcc" || lower == "china mobile" || lower == "46000" ||
+      lower == "46002" || lower == "46007" || lower == "46008" || lower == "46020") {
     return "中国移动";
   }
-  if (raw == "CUCC" || raw == "China Unicom" || raw == "CHN-UNICOM" ||
-      raw == "46001" || raw == "46006") {
+  if (lower == "cucc" || lower == "china unicom" || lower == "chn-unicom" ||
+      lower == "46001" || lower == "46006" || lower == "46009") {
     return "中国联通";
   }
-  if (raw == "CTCC" || raw == "China Telecom" || raw == "CHN-CT" ||
-      raw == "46003" || raw == "46005" || raw == "46011") {
+  if (lower == "ctcc" || lower == "china telecom" || lower == "chn-ct" ||
+      lower == "46003" || lower == "46005" || lower == "46011") {
     return "中国电信";
   }
   return raw;
