@@ -353,3 +353,34 @@ void resetConfigController(AsyncWebServerRequest* request, uint8_t* data,
     vTaskDelete(nullptr);
   }, "restart", 2048, nullptr, 1, nullptr);
 }
+
+// ── 重启设备端点 ─────────────────────────────────────────────
+void rebootController(AsyncWebServerRequest* request, uint8_t* data,
+                      size_t len, size_t index, size_t total) {
+  if (index + len < total) return;
+
+  JsonDocument doc;
+  if (deserializeJson(doc, data, len) != DeserializationError::Ok
+      || !doc.is<JsonObject>()) {
+    request->send(400, "application/json",
+      "{\"ok\":false,\"error\":\"请求格式错误\"}");
+    return;
+  }
+
+  const char* token = doc["token"] | "";
+  if (g_resetToken.length() == 0 || strcmp(token, g_resetToken.c_str()) != 0) {
+    request->send(403, "application/json",
+      "{\"ok\":false,\"error\":\"token无效或已过期，请重新获取\"}");
+    return;
+  }
+
+  g_resetToken = "";
+  LOG("HTTP", "网页端触发设备重启");
+
+  request->send(200, "application/json", "{\"ok\":true,\"message\":\"设备将在2秒后重启\"}");
+  xTaskCreate([](void*) {
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    ESP.restart();
+    vTaskDelete(nullptr);
+  }, "reboot", 2048, nullptr, 1, nullptr);
+}

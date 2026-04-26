@@ -81,12 +81,16 @@ void setupHttpServer(AsyncWebServer& server) {
   server.on("/flight",  HTTP_GET,  flightModeController);
   server.on("/at",      HTTP_GET,  atCommandController);
 
-  // Config reset API
+  // Config reset / reboot API
   server.on("/api/tools/reset-token", HTTP_GET, resetTokenController);
   server.on("/api/tools/reset", HTTP_POST,
     [](AsyncWebServerRequest* request) {},
     nullptr,
     resetConfigController);
+  server.on("/api/tools/reboot", HTTP_POST,
+    [](AsyncWebServerRequest* request) {},
+    nullptr,
+    rebootController);
 
   // OTA upgrade API
   server.on("/api/ota/status",  HTTP_GET,  otaStatusController);

@@ -87,9 +87,8 @@ static int buildSortedWifiOrder(int* outOrder, int count) {
 }
 
 static void setupSTAMode() {
-  WiFi.mode(WIFI_STA);
-  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
   WiFi.setHostname(getDeviceName().c_str());
+  WiFi.mode(WIFI_STA);
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
 }
 

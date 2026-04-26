@@ -522,6 +522,22 @@
       </div>
 
       <div class="section">
+        <div class="section-title">🖥️ 设备管理</div>
+        <button
+          type="button"
+          id="rebootBtn"
+          onclick="rebootDevice()"
+          style="background: #ff5722"
+        >
+          🔁 重启设备
+        </button>
+        <div class="hint" style="color: #888; margin-top: 6px">
+          重启后设备将在约20秒内恢复正常工作
+        </div>
+        <div class="result-box" id="rebootResult"></div>
+      </div>
+
+      <div class="section">
         <div class="section-title">🗂️ 配置管理</div>
         <div class="form-group">
           <button
@@ -629,6 +645,55 @@
             } else {
               result.className = "result-box result-error";
               result.textContent = "❌ " + (d.error || "重置失败");
+              btn.disabled = false;
+            }
+          })
+          .catch(function (e) {
+            result.className = "result-box result-error";
+            result.textContent = "❌ 请求失败: " + e.message;
+            btn.disabled = false;
+          });
+      }
+
+      function rebootDevice() {
+        var result = document.getElementById("rebootResult");
+        var btn = document.getElementById("rebootBtn");
+
+        if (!confirm("确定要重启设备吗？\n\n设备将在2秒后重启，期间无法收发短信。")) return;
+
+        result.className = "result-box result-loading";
+        result.style.display = "block";
+        result.textContent = "正在获取凭证...";
+        btn.disabled = true;
+
+        fetch("/api/tools/reset-token")
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            result.textContent = "正在重启设备...";
+            return fetch("/api/tools/reboot", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ token: d.token }),
+            });
+          })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d.ok) {
+              result.className = "result-box result-success";
+              var count = 2;
+              result.textContent = "✅ " + d.message + "（" + count + "秒）";
+              var timer = setInterval(function () {
+                count--;
+                if (count <= 0) {
+                  clearInterval(timer);
+                  result.textContent = "🔄 设备正在重启，请稍候...";
+                } else {
+                  result.textContent = "✅ " + d.message + "（" + count + "秒）";
+                }
+              }, 1000);
+            } else {
+              result.className = "result-box result-error";
+              result.textContent = "❌ " + (d.error || "重启失败");
               btn.disabled = false;
             }
           })
@@ -1151,6 +1216,19 @@
             document.getElementById("otaCurVer").textContent = "获取失败";
             document.getElementById("otaLatestVer").textContent = "检查失败";
           });
+
+        // 页面加载/刷新时检测是否有正在进行的升级，有则自动恢复轮询
+        fetch("/api/ota/status")
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            var active = ["checking", "downloading", "writing", "flashing_fs"];
+            if (active.indexOf(d.state) !== -1) {
+              otaInUpgrade = true;
+              renderOtaStatus(d);
+              startOtaPolling();
+            }
+          })
+          .catch(function () {});
       }
 
       function startOnlineUpgrade() {
