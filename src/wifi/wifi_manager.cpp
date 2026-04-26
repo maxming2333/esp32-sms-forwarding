@@ -86,6 +86,13 @@ static int buildSortedWifiOrder(int* outOrder, int count) {
   return visCount;
 }
 
+static void setupSTAMode() {
+  WiFi.mode(WIFI_STA);
+  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
+  WiFi.setHostname(getDeviceName().c_str());
+  WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+}
+
 static void enterAPMode() {
   WiFi.softAP(kApSsid);
   // AP 模式下必须启用 Modem Sleep，否则 WiFi 持续占用射频，BLE 无法发送广播包
@@ -122,11 +129,7 @@ void wifiManagerInit() {
   }
 
   // 设置客户端主机名（路由器 DHCP 列表中显示的名称），格式：SMS-Forwarder-XXXXXXXX
-  WiFi.mode(WIFI_STA);
-  WiFi.setHostname(getDeviceName().c_str());
-
-  // 扫描所有信道以连接信号最强的 AP，防止在 mesh 组网这类场景中连接到弱 AP
-  WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+  setupSTAMode();
 
   // 扫描当前环境 WiFi，优先连接可见 SSID
   WiFi.scanNetworks(false);  // 阻塞扫描，此处处于 setup() 或 AP 恢复前，WDT 已有保护
@@ -201,9 +204,7 @@ void wifiManagerTick() {
         WiFi.softAPdisconnect(true);
         delay(100);
         esp_task_wdt_reset();
-        WiFi.mode(WIFI_STA);
-        WiFi.setHostname(getDeviceName().c_str());
-        WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+        setupSTAMode();
         s_mode          = WIFI_MODE_RECONNECTING;
         s_reconnFromAP  = true;
         s_reconnState   = RECONNECT_WAITING;
