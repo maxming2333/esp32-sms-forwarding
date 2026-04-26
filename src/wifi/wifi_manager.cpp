@@ -42,7 +42,7 @@ void wifiManagerInit() {
   // 软重启（ESP.restart）后 WiFi 驱动状态可能残留，强制关闭后再初始化
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
-  delay(100);
+  delay(500);
   esp_task_wdt_reset();
 
   if (config.wifiCount == 0) {
@@ -68,7 +68,7 @@ void wifiManagerInit() {
     for (int attempt = 1; attempt <= WIFI_RECONNECT_ATTEMPTS_PER_SSID; attempt++) {
       WiFi.begin(ssid, pass, 0, nullptr, true);
       unsigned long start = millis();
-      while (millis() - start < 3000) {
+      while (millis() - start < 10000) {
         if (WiFi.status() == WL_CONNECTED) {
           s_mode          = WIFI_MODE_STA_CONNECTED;
           s_everConnected = true;
