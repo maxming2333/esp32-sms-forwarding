@@ -63,7 +63,7 @@ void wifiManagerInit() {
 
     const char* ssid = config.wifiList[w].ssid.c_str();
     const char* pass = config.wifiList[w].password.c_str();
-    LOG("WiFi", "尝试第 %d/%d 条WiFi: %s(%s)", w + 1, config.wifiCount, ssid, pass);
+    LOG("WiFi", "尝试第 %d/%d 条WiFi: %s", w + 1, config.wifiCount, ssid);
 
     for (int attempt = 1; attempt <= WIFI_RECONNECT_ATTEMPTS_PER_SSID; attempt++) {
       WiFi.begin(ssid, pass, 0, nullptr, true);

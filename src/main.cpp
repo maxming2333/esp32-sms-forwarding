@@ -160,7 +160,12 @@ void loop() {
   if (s_bootPushPending && millis() >= s_bootPushAfterMs) {
     s_bootPushPending = false;
     LOG("Push", "触发开机推送...");
-    sendPushNotification("设备", "设备已启动\n设备地址: " + getDeviceUrl(), timeModuleGetDateStr(), MSG_TYPE_SIM);
+    sendPushNotification("设备",
+      "设备已启动"
+      "\n设备地址: " + getDeviceUrl() +
+      "\nMAC: " + WiFi.macAddress() +
+      "\n固件版本: " + String(APP_VERSION),
+      timeModuleGetDateStr(), MSG_TYPE_SIM);
   }
 
   checkConcatTimeout();
