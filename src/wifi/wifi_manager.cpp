@@ -174,7 +174,48 @@ void wifiManagerInit() {
 }
 
 void wifiManagerTick() {
-  if (s_mode == WIFI_MODE_AP_ACTIVE) return;
+  if (s_mode == WIFI_MODE_AP_ACTIVE) {
+    if (config.wifiCount == 0) return;  // 无配置，无需扫描
+
+    if (s_reconnState == RECONNECT_AP_SCAN_WAIT) {
+      int n = WiFi.scanComplete();
+      if (n < 0) return;  // 扫描未完成，下次 tick 继续轮询
+
+      int apOrder[MAX_WIFI_ENTRIES] = {};
+      int matchCount = buildSortedWifiOrder(apOrder, config.wifiCount);
+      WiFi.scanDelete();  // 释放扫描结果内存，避免内存泄漏
+
+      if (matchCount > 0) {
+        LOG("WiFi", "AP模式后台扫描发现 %d 条匹配SSID，切换到重连状态机", matchCount);
+        // 关闭 AP，切到 STA 模式，交由非阻塞重连状态机处理
+        WiFi.softAPdisconnect(true);
+        delay(100);
+        esp_task_wdt_reset();
+        WiFi.mode(WIFI_STA);
+        WiFi.setHostname(getDeviceName().c_str());
+        WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+        s_mode          = WIFI_MODE_RECONNECTING;
+        s_reconnFromAP  = true;
+        s_reconnState   = RECONNECT_WAITING;
+        s_reconnWIdx    = 0;
+        s_reconnAttempt = 0;
+        s_lastAttemptMs = 0;  // 使 WAITING 立即触发首次尝试
+      } else {
+        LOG("WiFi", "AP模式后台扫描无匹配SSID，%lums后重试", WIFI_AP_RESCAN_INTERVAL_MS);
+        s_reconnState    = RECONNECT_IDLE;
+        s_apRescanNextMs = millis() + WIFI_AP_RESCAN_INTERVAL_MS;
+      }
+      return;
+    }
+
+    // 定时触发异步扫描
+    if (millis() >= s_apRescanNextMs) {
+      LOG("WiFi", "AP模式启动后台WiFi扫描...");
+      WiFi.scanNetworks(true);  // 异步，不阻塞 loop()
+      s_reconnState = RECONNECT_AP_SCAN_WAIT;
+    }
+    return;
+  }
 
   switch (s_reconnState) {
     case RECONNECT_IDLE:
