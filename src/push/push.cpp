@@ -5,6 +5,7 @@
 #include "time/time_module.h"
 #include "sim/sim.h"
 #include "sim/sim_dispatcher.h"
+#include "wifi/wifi_manager.h"
 #include "logger.h"
 #include <WiFi.h>
 #include <time.h>
@@ -73,6 +74,7 @@ static MessageContext buildMsgContext(const String& sender, const String& messag
   ctx.remark      = config.remark;
   ctx.triggerType = triggerType;
   ctx.uptime      = formatUptime(millis());
+  ctx.deviceName  = getDeviceName();
   return ctx;
 }
 

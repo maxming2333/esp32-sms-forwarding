@@ -16,6 +16,7 @@ struct MessageContext {
   String uptime;       // [NEW] 设备运行时长
   String channelName;  // [NEW] 当前推送通道名称
   String channelType;  // [NEW] 当前推送类型（中文标签）
+  String deviceName;   // [NEW] 设备名称
 };
 
 // 格式化运行时长（ms → 人类可读字符串）

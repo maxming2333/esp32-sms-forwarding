@@ -36,17 +36,18 @@ String renderTemplate(const String& tmpl, const MessageContext& ctx) {
   result.replace("{channel_name}",  ctx.channelName);
   result.replace("{channel_type}",  ctx.channelType);
   // {from} 及向后兼容别名 {sender}
-  result.replace("{from}",          ctx.from.length()      > 0 ? ctx.from      : "未知");
-  result.replace("{sender}",        ctx.from.length()      > 0 ? ctx.from      : "未知");
+  result.replace("{from}",          ctx.from.length()       > 0 ? ctx.from       : "未知");
+  result.replace("{sender}",        ctx.from.length()       > 0 ? ctx.from       : "未知");
   result.replace("{message}",       ctx.message);
-  result.replace("{timestamp}",     ctx.timestamp.length() > 0 ? ctx.timestamp : "0");
-  result.replace("{date}",          ctx.date.length()      > 0 ? ctx.date      : "未知");
-  result.replace("{device_id}",     ctx.deviceId.length()  > 0 ? ctx.deviceId  : "未知");
-  result.replace("{carrier}",       ctx.carrier.length()   > 0 ? ctx.carrier   : "未知");
+  result.replace("{timestamp}",     ctx.timestamp.length()  > 0 ? ctx.timestamp  : "0");
+  result.replace("{date}",          ctx.date.length()       > 0 ? ctx.date       : "未知");
+  result.replace("{device_id}",     ctx.deviceId.length()   > 0 ? ctx.deviceId   : "未知");
+  result.replace("{device_name}",   ctx.deviceName.length() > 0 ? ctx.deviceName : "未知");
+  result.replace("{carrier}",       ctx.carrier.length()    > 0 ? ctx.carrier    : "未知");
   // {to} 及向后兼容别名 {sim_number}
-  result.replace("{to}",            ctx.to.length()        > 0 ? ctx.to        : "未知");
-  result.replace("{sim_number}",    ctx.to.length()        > 0 ? ctx.to        : "未知");
-  result.replace("{sim_slot}",      ctx.simSlot.length()   > 0 ? ctx.simSlot   : "SIM1");
-  result.replace("{signal}",        ctx.signal.length()    > 0 ? ctx.signal    : "未知");
+  result.replace("{to}",            ctx.to.length()         > 0 ? ctx.to         : "未知");
+  result.replace("{sim_number}",    ctx.to.length()         > 0 ? ctx.to         : "未知");
+  result.replace("{sim_slot}",      ctx.simSlot.length()    > 0 ? ctx.simSlot    : "SIM1");
+  result.replace("{signal}",        ctx.signal.length()     > 0 ? ctx.signal     : "未知");
   return result;
 }
