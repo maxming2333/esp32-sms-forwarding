@@ -321,8 +321,8 @@ void simTick() {
 
   simTrafficTick();
 
-  // T008: 本机号码 10s 重试查询
-  if (s_state == SIM_READY && !s_numberReady && millis() >= s_numRetryNext) {
+  // T008: 本机号码重试查询（独立于 SIM 状态，只要调度器在线且号码未就绪就持续重试）
+  if (!s_numberReady && simDispatcherRunning() && millis() >= s_numRetryNext) {
     LOG("SIM", "本机号码重试查询...");
     String num = simQueryPhoneNumber(3000);
     if (num.length() > 0) {
