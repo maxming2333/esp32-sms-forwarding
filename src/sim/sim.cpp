@@ -340,6 +340,7 @@ void simTick() {
 
 static String normalizeCarrier(const String& raw) {
   String lower = raw;
+  lower.trim();
   lower.toLowerCase();
   if (lower == "cmcc" || lower == "china mobile" || lower == "46000" ||
       lower == "46002" || lower == "46007" || lower == "46008" || lower == "46020") {
