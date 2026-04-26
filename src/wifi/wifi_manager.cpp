@@ -27,6 +27,65 @@ static unsigned long s_lastAttemptMs  = 0;
 static unsigned long s_apRescanNextMs = 0;     // 下次 AP 后台扫描触发时间戳
 static bool          s_reconnFromAP   = false;  // 本次重连是否来自 AP 恢复
 
+// 利用已完成的 WiFi 扫描结果，将 config.wifiList 下标重排到 outOrder[]
+// - 可见 SSID 的下标按信号强度（RSSI 降序）排列在前
+// - 不可见 SSID 的下标按原始下标顺序追加在后
+// 返回值：可见（匹配）的 SSID 数量
+// 前提：调用前 WiFi.scanComplete() >= 0
+static int buildSortedWifiOrder(int* outOrder, int count) {
+  int scanCount = WiFi.scanComplete();
+  if (scanCount < 0) scanCount = 0;
+
+  // 为每条配置 SSID 找到最强信号（处理同名 SSID 多 AP 情况）
+  // bestRssi[i] = 配置项 i 对应的最强 RSSI；INT_MIN 表示不可见
+  int bestRssi[MAX_WIFI_ENTRIES];
+  for (int i = 0; i < count; i++) bestRssi[i] = INT_MIN;
+
+  for (int s = 0; s < scanCount; s++) {
+    String scannedSsid = WiFi.SSID(s);
+    int    rssi        = WiFi.RSSI(s);
+    for (int i = 0; i < count; i++) {
+      if (config.wifiList[i].ssid == scannedSsid) {
+        if (rssi > bestRssi[i]) bestRssi[i] = rssi;
+      }
+    }
+  }
+
+  // 分离可见/不可见列表
+  // visible[]: 可见项的 {configIdx, rssi}，用于排序
+  struct VisEntry { int idx; int rssi; };
+  VisEntry visible[MAX_WIFI_ENTRIES];
+  int      visCount   = 0;
+  int      invisible[MAX_WIFI_ENTRIES];
+  int      invisCount = 0;
+
+  for (int i = 0; i < count; i++) {
+    if (bestRssi[i] != INT_MIN) {
+      visible[visCount++] = {i, bestRssi[i]};
+    } else {
+      invisible[invisCount++] = i;
+    }
+  }
+
+  // 可见列表按 RSSI 降序排序（简单插入排序，MAX_WIFI_ENTRIES=5，开销可忽略）
+  for (int a = 1; a < visCount; a++) {
+    VisEntry key = visible[a];
+    int b = a - 1;
+    while (b >= 0 && visible[b].rssi < key.rssi) {
+      visible[b + 1] = visible[b];
+      b--;
+    }
+    visible[b + 1] = key;
+  }
+
+  // 填充 outOrder[]
+  int pos = 0;
+  for (int i = 0; i < visCount;   i++) outOrder[pos++] = visible[i].idx;
+  for (int i = 0; i < invisCount; i++) outOrder[pos++] = invisible[i];
+
+  return visCount;
+}
+
 static void enterAPMode() {
   WiFi.softAP(kApSsid);
   // AP 模式下必须启用 Modem Sleep，否则 WiFi 持续占用射频，BLE 无法发送广播包
