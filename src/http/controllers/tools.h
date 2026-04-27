@@ -12,3 +12,4 @@ void resetConfigController(AsyncWebServerRequest* request, uint8_t* data,
                            size_t len, size_t index, size_t total);
 void rebootController(AsyncWebServerRequest* request, uint8_t* data,
                       size_t len, size_t index, size_t total);
+void exportCoreDumpController(AsyncWebServerRequest* request);

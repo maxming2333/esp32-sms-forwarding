@@ -116,6 +116,8 @@ jobs:
           cp "${BUILD_DIR}/littlefs.bin" "${BUILD_DIR}/littlefs-${VERSION_TAG}.bin"
           # ota-{VERSION_TAG}.bin: 仅应用分区（firmware.bin），用于设备 OTA 在线升级
           cp "${BUILD_DIR}/firmware.bin" "${BUILD_DIR}/ota-${VERSION_TAG}.bin"
+          # firmware-{VERSION_TAG}.elf: 调试符号文件，配合 coredump.bin 做离线分析
+          cp "${BUILD_DIR}/firmware.elf" "${BUILD_DIR}/firmware-${VERSION_TAG}.elf"
 
       - name: Generate release notes
         if: github.event_name != 'pull_request'
@@ -125,6 +127,7 @@ jobs:
           HASH_UPDATE=$(sha256sum "${BUILD_DIR}/update-${VERSION_TAG}.bin" | awk '{print $1}')
           HASH_LITTLEFS=$(sha256sum "${BUILD_DIR}/littlefs-${VERSION_TAG}.bin" | awk '{print $1}')
           HASH_OTA=$(sha256sum "${BUILD_DIR}/ota-${VERSION_TAG}.bin" | awk '{print $1}')
+          HASH_ELF=$(sha256sum "${BUILD_DIR}/firmware-${VERSION_TAG}.elf" | awk '{print $1}')
           cat > release_notes.md << EOF
           ## 固件版本: ${VERSION_TAG}
 
@@ -142,6 +145,7 @@ jobs:
           | update-${VERSION_TAG}.bin | 固件升级（**保留 WiFi 等配置**，含 Web UI） | \`0x10000\` |
           | littlefs-${VERSION_TAG}.bin | 单独更新 Web UI 文件系统 | \`0x3B0000\` |
           | ota-${VERSION_TAG}.bin | 设备 OTA 在线升级专用（仅应用分区） | OTA 分区 |
+          | firmware-${VERSION_TAG}.elf | 调试符号文件，配合 coredump.bin 离线分析用 | — |
 
           ## 烧录说明
 
@@ -195,6 +199,7 @@ jobs:
           | update-${VERSION_TAG}.bin | ${HASH_UPDATE} |
           | littlefs-${VERSION_TAG}.bin | ${HASH_LITTLEFS} |
           | ota-${VERSION_TAG}.bin | ${HASH_OTA} |
+          | firmware-${VERSION_TAG}.elf | ${HASH_ELF} |
           EOF
 
       - name: Publish GitHub Release
@@ -211,6 +216,7 @@ jobs:
             .pio/build/makergo_esp32c3_supermini/update-${{ env.VERSION_TAG }}.bin
             .pio/build/makergo_esp32c3_supermini/littlefs-${{ env.VERSION_TAG }}.bin
             .pio/build/makergo_esp32c3_supermini/ota-${{ env.VERSION_TAG }}.bin
+            .pio/build/makergo_esp32c3_supermini/firmware-${{ env.VERSION_TAG }}.elf
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

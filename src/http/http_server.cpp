@@ -91,6 +91,7 @@ void setupHttpServer(AsyncWebServer& server) {
     [](AsyncWebServerRequest* request) {},
     nullptr,
     rebootController);
+  server.on("/api/tools/coredump/export", HTTP_GET, exportCoreDumpController);
 
   // OTA upgrade API
   server.on("/api/ota/status",  HTTP_GET,  otaStatusController);

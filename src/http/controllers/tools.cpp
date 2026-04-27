@@ -8,6 +8,7 @@
 #include <AsyncJson.h>
 #include <WiFi.h>
 #include <esp_random.h>
+#include <esp_partition.h>
 
 // ── CSRF Token（内存态，非持久化）──────────────────────────────
 static String g_resetToken = "";
@@ -383,4 +384,68 @@ void rebootController(AsyncWebServerRequest* request, uint8_t* data,
     ESP.restart();
     vTaskDelete(nullptr);
   }, "reboot", 2048, nullptr, 1, nullptr);
+}
+
+void exportCoreDumpController(AsyncWebServerRequest* request) {
+  const esp_partition_t* part = esp_partition_find_first(
+    ESP_PARTITION_TYPE_DATA,
+    ESP_PARTITION_SUBTYPE_DATA_COREDUMP,
+    nullptr
+  );
+
+  if (part == nullptr) {
+    request->send(404, "application/json",
+      "{\"ok\":false,\"error\":\"未找到 coredump 分区\"}");
+    return;
+  }
+
+  uint8_t scanBuf[256];
+  size_t usedSize = 0;
+
+  for (size_t offset = part->size; offset > 0;) {
+    size_t chunk = offset >= sizeof(scanBuf) ? sizeof(scanBuf) : offset;
+    offset -= chunk;
+
+    if (esp_partition_read(part, offset, scanBuf, chunk) != ESP_OK) {
+      request->send(500, "application/json",
+        "{\"ok\":false,\"error\":\"读取 coredump 分区失败\"}");
+      return;
+    }
+
+    for (int i = static_cast<int>(chunk) - 1; i >= 0; --i) {
+      if (scanBuf[i] != 0xFF) {
+        usedSize = offset + static_cast<size_t>(i) + 1;
+        offset = 0;
+        break;
+      }
+    }
+  }
+
+  if (usedSize == 0) {
+    request->send(404, "application/json",
+      "{\"ok\":false,\"error\":\"未发现可导出的 coredump（分区为空）\"}");
+    return;
+  }
+
+  LOG("HTTP", "导出 coredump: used=%u bytes, part=%s", static_cast<unsigned>(usedSize), part->label);
+
+  AsyncWebServerResponse* resp = request->beginChunkedResponse(
+    "application/octet-stream",
+    [part, usedSize](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
+      if (index >= usedSize) return 0;
+
+      size_t left = usedSize - index;
+      size_t toRead = left < maxLen ? left : maxLen;
+      if (esp_partition_read(part, index, buffer, toRead) != ESP_OK) {
+        return 0;
+      }
+      return toRead;
+    }
+  );
+
+  String cdFilename = getDeviceName() + "-coredump.bin";
+  resp->addHeader("Content-Disposition", "attachment; filename=" + cdFilename);
+  resp->addHeader("Cache-Control", "no-store");
+  resp->addHeader("X-CoreDump-Size", String(usedSize));
+  request->send(resp);
 }
