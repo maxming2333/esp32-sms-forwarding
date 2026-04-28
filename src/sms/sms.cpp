@@ -398,7 +398,7 @@ static void processPduLine(const String& line) {
       processSmsContent(concatBuffer[slot].sender.c_str(),
                         fullText.c_str(),
                         concatBuffer[slot].timestamp.c_str(),
-                        makeMsgType(MSG_TYPE_SMS, classLabel));
+                        MsgTypeInfo(MSG_TYPE_SMS, classLabel));
       clearConcatSlot(slot);
     }
   } else {
