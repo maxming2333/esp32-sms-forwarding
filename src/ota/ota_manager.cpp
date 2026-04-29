@@ -105,12 +105,11 @@ static String fetchLatestTag(const String& url) {
 
 // ── checkVersionTask — 仅查询最新版本，不下载固件 ─────────────────
 static void checkVersionTask(void* /*param*/) {
-    g_state    = OtaState::CHECKING;
-    g_progress = 0;
-    g_message  = "正在查询最新版本...";
-
     String latestUrl = String(OTA_RELEASES_BASE_URL) + "/latest";
     LOG("OTA", "版本检查: %s", latestUrl.c_str());
+    g_state      = OtaState::CHECKING;
+    g_progress   = 0;
+    g_message    = "正在查询最新版本...";
     g_latestVer  = fetchLatestTag(latestUrl);
     g_inProgress = false;
     g_state      = OtaState::IDLE;
