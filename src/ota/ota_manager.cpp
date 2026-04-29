@@ -79,12 +79,12 @@ OtaStatusPayload otaGetStatus() {
 
 // ── fetchLatestTag — 向 GitHub 查询最新 release tag（含块作用域，TLS 自动释放）──
 // 成功返回 tag 字符串，失败返回空串
-static String fetchLatestTag() {
+static String fetchLatestTag(const String& url) {
     String latestTag = "";
     {
         HTTPClient verHttp;
         WiFiClientSecure verTls;
-        beginHttpClient(verHttp, verTls, (String(OTA_RELEASES_BASE_URL) + "/latest").c_str());
+        beginHttpClient(verHttp, verTls, url);
         verHttp.setTimeout(OTA_HTTP_TIMEOUT_MS);
         verHttp.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
         int verCode = verHttp.GET();
@@ -110,7 +110,8 @@ static void checkVersionTask(void* /*param*/) {
     g_message  = "正在查询最新版本...";
     LOG("OTA", "版本检查: %s/latest", OTA_RELEASES_BASE_URL);
 
-    g_latestVer  = fetchLatestTag();
+    String latestUrl = String(OTA_RELEASES_BASE_URL) + "/latest";
+    g_latestVer  = fetchLatestTag(latestUrl);
     g_inProgress = false;
     g_state      = OtaState::IDLE;
     g_message    = "";
