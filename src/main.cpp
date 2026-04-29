@@ -29,8 +29,9 @@ AsyncWebServer server(80);
 static bool s_simInfoFetched = false;
 
 // 开机推送崩溃快照（在安排推送时捕获，防止 RTC 被后续更新覆写）
-static bool   s_cachedHasCrash  = false;
-static time_t s_cachedCrashTime = 0;
+static bool   s_cachedHasCrash      = false;
+static time_t s_cachedCrashTime     = 0;
+static String s_cachedCrashVersion  = "";
 
 // 开机推送：检测到 WiFi 初始化完成后延迟 BOOT_PUSH_DELAY_MS 触发
 static bool          s_bootPushPending    = false;
@@ -157,8 +158,9 @@ void loop() {
   if (!s_wifiInitWasSeen && wifiManagerIsInitDone()) {
     s_wifiInitWasSeen = true;
     if (isConfigValid()) {
-      s_cachedHasCrash  = coredumpHasData();
-      s_cachedCrashTime = coredumpGetCrashTime();
+      s_cachedHasCrash     = coredumpHasData();
+      s_cachedCrashTime    = coredumpGetCrashTime();
+      s_cachedCrashVersion = coredumpGetCrashVersion();
       s_bootPushPending = true;
       s_bootPushAfterMs = millis() + BOOT_PUSH_DELAY_MS;
       LOG("Push", "WiFi初始化完成，%lu ms 后触发开机推送", BOOT_PUSH_DELAY_MS);
@@ -181,10 +183,14 @@ void loop() {
           struct tm tmInfo;
           gmtime_r(&ct, &tmInfo);
           strftime(timeBuf, sizeof(timeBuf), "%Y%m%dT%H%M%S", &tmInfo);
-          bootMsg += String("\n⚠️ 崩溃记录: 上次崩溃时间 ") + timeBuf + "（近似），请前往工具箱导出 coredump";
+          bootMsg += String("\n\u26a0\ufe0f 崩溃记录: 上次崩溃时间 ") + timeBuf + "（近似）";
         } else {
-          bootMsg += "\n⚠️ 崩溃记录: 检测到上次崩溃（时间未知），请前往工具箱导出 coredump";
+          bootMsg += "\n\u26a0\ufe0f 崩溃记录: 检测到上次崩溃（时间未知）";
         }
+        if (s_cachedCrashVersion.length() > 0) {
+          bootMsg += String("，崩溃版本: ") + s_cachedCrashVersion;
+        }
+        bootMsg += "，请前往工具筱导出 coredump";
       }
       sendPushNotification("设备", bootMsg, timeModuleGetDateStr(), MsgTypeInfo(MSG_TYPE_SIM));
     }

@@ -734,7 +734,8 @@
             var sizeStr = d.size ? (" / 文件大小: " + (d.size >= 1048576
               ? (d.size / 1048576).toFixed(2) + " MB"
               : (d.size / 1024).toFixed(1) + " KB")) : "";
-            card.innerHTML = "⚠️ <strong>检测到崩溃记录</strong><br>崩溃时间：" + timeStr + "（近似）" + sizeStr;
+            var verStr = d.crashVersion ? (" / 固件版本: " + d.crashVersion) : "";
+            card.innerHTML = "⚠️ <strong>检测到崩溃记录</strong><br>崩溃时间：" + timeStr + "（近似）" + verStr + sizeStr;
             card.style.display = "block";
           })
           .catch(function () {});

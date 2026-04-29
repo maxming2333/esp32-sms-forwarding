@@ -1,6 +1,7 @@
 #include "tools.h"
 #include "config/config.h"
 #include "logger.h"
+#include "ota/ota_manager.h"
 #include <Preferences.h>
 #include "sms/sms.h"
 #include "sim/sim_dispatcher.h"
@@ -18,7 +19,9 @@
 // RTC 内存：panic 重启后保留，断电清零。记录最后已知 wall-clock 供崩溃时间估算。
 RTC_DATA_ATTR static time_t s_rtcLastKnownTime = 0;
 // 最后一次崩溃时间（panic 重启时从 RTC 写入 NVS，断电后从 NVS 加载）
-static time_t s_crashTime = 0;
+static time_t s_crashTime    = 0;
+// 最后一次崩溃时的固件版本（panic 重启时写入 NVS，断电后从 NVS 加载）
+static String s_crashVersion = "";
 
 // 扫描 coredump 分区末尾，返回实际使用字节数（0 = 分区为空）
 static size_t scanCoredumpUsedSize(const esp_partition_t* part) {
@@ -500,16 +503,20 @@ void coredumpInit() {
     LOG("Time", "从 NVS 恢复系统时间（近似）: %ld", (long)s_rtcLastKnownTime);
   }
 
-  // 从 NVS 加载上次崩溃时间
+  // 从 NVS 加载上次崩溃时间和固件版本
   long savedCrash = prefs.getLong("cdCrashTs", 0);
   if (savedCrash > 0) s_crashTime = (time_t)savedCrash;
+  s_crashVersion = prefs.getString("cdCrashVer", "");
 
   // panic 重启：RTC 时间即为崩溃前最后已知时间，写入 NVS 使其与 coredump 文件对应。
-  // 连续崩溃时 coredump 文件被覆盖，此处同步覆盖崩溃时间，保持二者一致。
+  // 连续崩溃时 coredump 文件被覆盖，此处同步覆盖崩溃时间和版本，保持二者一致。
   if (esp_reset_reason() == ESP_RST_PANIC && s_rtcLastKnownTime > 0) {
-    s_crashTime = s_rtcLastKnownTime;
-    prefs.putLong("cdCrashTs", (long)s_crashTime);
-    LOG("Coredump", "检测到 panic 重启，崩溃时间: %ld", (long)s_crashTime);
+    s_crashTime    = s_rtcLastKnownTime;
+    s_crashVersion = otaGetVersion();
+    prefs.putLong("cdCrashTs",  (long)s_crashTime);
+    prefs.putString("cdCrashVer", s_crashVersion);
+    LOG("Coredump", "检测到 panic 重启，崩溃时间: %ld，版本: %s",
+        (long)s_crashTime, s_crashVersion.c_str());
   }
 
   prefs.end();
@@ -525,6 +532,10 @@ time_t coredumpGetCrashTime() {
   return s_crashTime;
 }
 
+String coredumpGetCrashVersion() {
+  return s_crashVersion;
+}
+
 void coredumpInfoController(AsyncWebServerRequest* request) {
   const esp_partition_t* part = findCoredumpPartition();
   if (!part) {
@@ -538,8 +549,9 @@ void coredumpInfoController(AsyncWebServerRequest* request) {
   JsonObject root = resp->getRoot();
   root["hasCoredump"] = (usedSize > 0);
   if (usedSize > 0) {
-    root["size"]      = (unsigned int)usedSize;
-    root["crashTime"] = (long long)s_crashTime;
+    root["size"]         = (unsigned int)usedSize;
+    root["crashTime"]    = (long long)s_crashTime;
+    root["crashVersion"] = s_crashVersion;
   }
   resp->setLength();
   request->send(resp);

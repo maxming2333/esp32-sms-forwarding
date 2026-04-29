@@ -19,4 +19,5 @@ void   coredumpInit();
 void   coredumpUpdateLastKnownTime(time_t t);
 bool   coredumpHasData();
 time_t coredumpGetCrashTime();
+String coredumpGetCrashVersion();
 void   coredumpInfoController(AsyncWebServerRequest* request);
