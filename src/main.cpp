@@ -183,14 +183,14 @@ void loop() {
           struct tm tmInfo;
           gmtime_r(&ct, &tmInfo);
           strftime(timeBuf, sizeof(timeBuf), "%Y%m%dT%H%M%S", &tmInfo);
-          bootMsg += String("\n\u26a0\ufe0f 崩溃记录: 上次崩溃时间 ") + timeBuf + "（近似）";
+          bootMsg += String("\n⚠️ 崩溃记录: 上次崩溃时间 ") + timeBuf + "（近似）";
         } else {
-          bootMsg += "\n\u26a0\ufe0f 崩溃记录: 检测到上次崩溃（时间未知）";
+          bootMsg += "\n⚠️ 崩溃记录: 检测到上次崩溃（时间未知）";
         }
         if (s_cachedCrashVersion.length() > 0) {
           bootMsg += String("，崩溃版本: ") + s_cachedCrashVersion;
         }
-        bootMsg += "，请前往工具筱导出 coredump";
+        bootMsg += "，请前往工具箱导出 coredump";
       }
       sendPushNotification("设备", bootMsg, timeModuleGetDateStr(), MsgTypeInfo(MSG_TYPE_SIM));
     }
