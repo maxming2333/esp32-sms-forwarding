@@ -15,6 +15,8 @@
 #include "push/push_retry.h"
 #include "http/http_server.h"
 #include "ota/ota_manager.h"
+#include "http/controllers/tools.h"
+#include <time.h>
 
 // Serial port mapping
 #define TXD 3
@@ -160,12 +162,25 @@ void loop() {
   if (s_bootPushPending && millis() >= s_bootPushAfterMs) {
     s_bootPushPending = false;
     LOG("Push", "触发开机推送...");
-    sendPushNotification("设备",
-      "设备已启动"
-      "\n设备地址: " + getDeviceUrl() +
-      "\nMAC: " + WiFi.macAddress() +
-      "\n固件版本: " + otaGetVersion(),
-      timeModuleGetDateStr(), MsgTypeInfo(MSG_TYPE_SIM));
+    {
+      String bootMsg = String("🚀 设备已启动") +
+        "\n🌐 设备地址: " + getDeviceUrl() +
+        "\n📶 MAC: " + WiFi.macAddress() +
+        "\n📦 固件版本: " + otaGetVersion();
+      if (coredumpHasData()) {
+        time_t ct = coredumpGetCrashTime();
+        if (ct > 0) {
+          char timeBuf[20];
+          struct tm tmInfo;
+          gmtime_r(&ct, &tmInfo);
+          strftime(timeBuf, sizeof(timeBuf), "%Y%m%dT%H%M%S", &tmInfo);
+          bootMsg += String("\n⚠️ 崩溃记录: 上次崩溃时间 ") + timeBuf + "（近似），请前往工具箱导出 coredump";
+        } else {
+          bootMsg += "\n⚠️ 崩溃记录: 检测到上次崩溃（时间未知），请前往工具箱导出 coredump";
+        }
+      }
+      sendPushNotification("设备", bootMsg, timeModuleGetDateStr(), MsgTypeInfo(MSG_TYPE_SIM));
+    }
   }
 
   checkConcatTimeout();
@@ -174,6 +189,15 @@ void loop() {
   pushRetryTick();
   timeModuleTick();
   wifiManagerTick();
+
+  // RTC 最后已知时间更新（每 10 秒，仅时间已同步时）
+  {
+    static unsigned long s_lastRtcUpdate = 0;
+    if (timeModuleIsTimeSynced() && millis() - s_lastRtcUpdate >= 10000) {
+      s_lastRtcUpdate = millis();
+      coredumpUpdateLastKnownTime(time(nullptr));
+    }
+  }
 
   // SIM 就绪后抓取运营商/信号，并在 NTP 未同步时从 SIM NITZ 同步时间
   if (!s_simInfoFetched && simGetState() == SIM_READY) {
