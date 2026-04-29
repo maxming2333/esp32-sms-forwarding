@@ -9,6 +9,33 @@
 #include <WiFi.h>
 #include <esp_random.h>
 #include <esp_partition.h>
+#include <time.h>
+
+// ── Coredump ──────────────────────────────────────────────────
+// RTC 内存：panic 重启后保留，断电清零。记录最后已知 wall-clock 供崩溃时间估算。
+RTC_DATA_ATTR static time_t s_rtcLastKnownTime = 0;
+
+// 扫描 coredump 分区末尾，返回实际使用字节数（0 = 分区为空）
+static size_t scanCoredumpUsedSize(const esp_partition_t* part) {
+  uint8_t buf[256];
+  for (size_t offset = part->size; offset > 0;) {
+    size_t chunk = (offset >= sizeof(buf)) ? sizeof(buf) : offset;
+    offset -= chunk;
+    if (esp_partition_read(part, offset, buf, chunk) != ESP_OK) return 0;
+    for (int i = static_cast<int>(chunk) - 1; i >= 0; --i) {
+      if (buf[i] != 0xFF) return offset + static_cast<size_t>(i) + 1;
+    }
+  }
+  return 0;
+}
+
+static const esp_partition_t* findCoredumpPartition() {
+  return esp_partition_find_first(
+    ESP_PARTITION_TYPE_DATA,
+    ESP_PARTITION_SUBTYPE_DATA_COREDUMP,
+    nullptr
+  );
+}
 
 // ── CSRF Token（内存态，非持久化）──────────────────────────────
 static String g_resetToken = "";
@@ -387,11 +414,7 @@ void rebootController(AsyncWebServerRequest* request, uint8_t* data,
 }
 
 void exportCoreDumpController(AsyncWebServerRequest* request) {
-  const esp_partition_t* part = esp_partition_find_first(
-    ESP_PARTITION_TYPE_DATA,
-    ESP_PARTITION_SUBTYPE_DATA_COREDUMP,
-    nullptr
-  );
+  const esp_partition_t* part = findCoredumpPartition();
 
   if (part == nullptr) {
     request->send(404, "application/json",
@@ -399,27 +422,7 @@ void exportCoreDumpController(AsyncWebServerRequest* request) {
     return;
   }
 
-  uint8_t scanBuf[256];
-  size_t usedSize = 0;
-
-  for (size_t offset = part->size; offset > 0;) {
-    size_t chunk = offset >= sizeof(scanBuf) ? sizeof(scanBuf) : offset;
-    offset -= chunk;
-
-    if (esp_partition_read(part, offset, scanBuf, chunk) != ESP_OK) {
-      request->send(500, "application/json",
-        "{\"ok\":false,\"error\":\"读取 coredump 分区失败\"}");
-      return;
-    }
-
-    for (int i = static_cast<int>(chunk) - 1; i >= 0; --i) {
-      if (scanBuf[i] != 0xFF) {
-        usedSize = offset + static_cast<size_t>(i) + 1;
-        offset = 0;
-        break;
-      }
-    }
-  }
+  size_t usedSize = scanCoredumpUsedSize(part);
 
   if (usedSize == 0) {
     request->send(404, "application/json",
@@ -448,4 +451,18 @@ void exportCoreDumpController(AsyncWebServerRequest* request) {
   resp->addHeader("Cache-Control", "no-store");
   resp->addHeader("X-CoreDump-Size", String(usedSize));
   request->send(resp);
+}
+
+void coredumpUpdateLastKnownTime(time_t t) {
+  s_rtcLastKnownTime = t;
+}
+
+bool coredumpHasData() {
+  const esp_partition_t* part = findCoredumpPartition();
+  if (!part) return false;
+  return scanCoredumpUsedSize(part) > 0;
+}
+
+time_t coredumpGetCrashTime() {
+  return s_rtcLastKnownTime;
 }
