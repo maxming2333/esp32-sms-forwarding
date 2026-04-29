@@ -454,6 +454,8 @@ void coredumpInfoController(AsyncWebServerRequest* request) {
     root["size"]         = (unsigned int)usedSize;
     root["crashTime"]    = (long long)coredumpGetCrashTime();
     root["crashVersion"] = coredumpGetCrashVersion();
+    String elfUrl = coredumpGetElfUrl();
+    if (elfUrl.length() > 0) root["elfUrl"] = elfUrl;
   }
   resp->setLength();
   request->send(resp);

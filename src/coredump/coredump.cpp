@@ -107,3 +107,10 @@ time_t coredumpGetCrashTime() {
 String coredumpGetCrashVersion() {
   return s_crashVersion;
 }
+
+String coredumpGetElfUrl() {
+  if (s_crashVersion.length() == 0) return "";
+  return String(OTA_RELEASES_BASE_URL)
+         + "/download/" + s_crashVersion
+         + "/firmware-" + s_crashVersion + ".elf";
+}

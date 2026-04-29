@@ -18,6 +18,9 @@ time_t coredumpGetCrashTime();
 // 获取上次崩溃时的固件版本（空串 = 无记录）
 String coredumpGetCrashVersion();
 
+// 获取对应版本的 ELF 调试符号下载 URL（空串 = 版本未知，无法构建）
+String coredumpGetElfUrl();
+
 // 供 HTTP 控制器使用：返回 coredump 分区指针（nullptr = 未找到）
 const esp_partition_t* coredumpGetPartition();
 

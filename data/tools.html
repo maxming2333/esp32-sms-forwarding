@@ -721,6 +721,8 @@
           });
       }
 
+      var coredumpElfUrl = "";
+
       function loadCoredumpInfo() {
         fetch("/api/tools/coredump/info")
           .then(function (r) { return r.json(); })
@@ -735,7 +737,14 @@
               ? (d.size / 1048576).toFixed(2) + " MB"
               : (d.size / 1024).toFixed(1) + " KB")) : "";
             var verStr = d.crashVersion ? (" / 固件版本: " + d.crashVersion) : "";
-            card.innerHTML = "⚠️ <strong>检测到崩溃记录</strong><br>崩溃时间：" + timeStr + "（近似）" + verStr + sizeStr;
+            var elfHtml = "";
+            if (d.elfUrl) {
+              coredumpElfUrl = d.elfUrl;
+              elfHtml = "<br><a href='" + d.elfUrl + "' target='_blank' "
+                + "style='color:#e65100;font-size:12px;'>"
+                + "📥 下载对应调试符号文件（firmware.elf）</a>";
+            }
+            card.innerHTML = "⚠️ <strong>检测到崩溃记录</strong><br>崩溃时间：" + timeStr + "（近似）" + verStr + sizeStr + elfHtml;
             card.style.display = "block";
           })
           .catch(function () {});
@@ -786,6 +795,15 @@
             result.className = "result-box result-success";
             result.textContent =
               "✅ coredump 导出成功，文件大小 " + fmt(d.blob.size);
+            if (coredumpElfUrl) {
+              result.innerHTML += "<br><small style='opacity:.8'>正在触发 ELF 下载，若未自动弹出请检查浏览器拦截...</small>";
+              var elfa = document.createElement("a");
+              elfa.href = coredumpElfUrl;
+              elfa.target = "_blank";
+              document.body.appendChild(elfa);
+              elfa.click();
+              document.body.removeChild(elfa);
+            }
           })
           .catch(function (e) {
             btn.disabled = false;
