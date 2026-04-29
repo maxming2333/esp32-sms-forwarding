@@ -14,10 +14,4 @@ void resetConfigController(AsyncWebServerRequest* request, uint8_t* data,
 void rebootController(AsyncWebServerRequest* request, uint8_t* data,
                       size_t len, size_t index, size_t total);
 void exportCoreDumpController(AsyncWebServerRequest* request);
-
-void   coredumpInit();
-void   coredumpUpdateLastKnownTime(time_t t);
-bool   coredumpHasData();
-time_t coredumpGetCrashTime();
-String coredumpGetCrashVersion();
-void   coredumpInfoController(AsyncWebServerRequest* request);
+void coredumpInfoController(AsyncWebServerRequest* request);

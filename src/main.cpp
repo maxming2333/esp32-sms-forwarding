@@ -15,7 +15,7 @@
 #include "push/push_retry.h"
 #include "http/http_server.h"
 #include "ota/ota_manager.h"
-#include "http/controllers/tools.h"
+#include "coredump/coredump.h"
 #include <time.h>
 
 // Serial port mapping
