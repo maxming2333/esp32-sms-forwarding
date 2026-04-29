@@ -729,7 +729,7 @@
             var card = document.getElementById("coredumpInfoCard");
             var timeStr = "时间未知";
             if (d.crashTime && d.crashTime > 0) {
-              timeStr = new Date(d.crashTime * 1000).toLocaleString();
+              timeStr = new Date(d.crashTime * 1000).toLocaleString("zh-CN");
             }
             var sizeStr = d.size ? (" / 文件大小: " + (d.size >= 1048576
               ? (d.size / 1048576).toFixed(2) + " MB"
