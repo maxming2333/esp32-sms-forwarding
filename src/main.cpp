@@ -28,6 +28,10 @@ AsyncWebServer server(80);
 // 记录 SIM 信息是否已抓取（在 loop 中 SIM_READY 后执行一次）
 static bool s_simInfoFetched = false;
 
+// 开机推送崩溃快照（在安排推送时捕获，防止 RTC 被后续更新覆写）
+static bool   s_cachedHasCrash  = false;
+static time_t s_cachedCrashTime = 0;
+
 // 开机推送：检测到 WiFi 初始化完成后延迟 BOOT_PUSH_DELAY_MS 触发
 static bool          s_bootPushPending    = false;
 static unsigned long s_bootPushAfterMs   = 0;
@@ -152,6 +156,8 @@ void loop() {
   if (!s_wifiInitWasSeen && wifiManagerIsInitDone()) {
     s_wifiInitWasSeen = true;
     if (isConfigValid()) {
+      s_cachedHasCrash  = coredumpHasData();
+      s_cachedCrashTime = coredumpGetCrashTime();
       s_bootPushPending = true;
       s_bootPushAfterMs = millis() + BOOT_PUSH_DELAY_MS;
       LOG("Push", "WiFi初始化完成，%lu ms 后触发开机推送", BOOT_PUSH_DELAY_MS);
@@ -167,8 +173,8 @@ void loop() {
         "\n🌐 设备地址: " + getDeviceUrl() +
         "\n📶 MAC: " + WiFi.macAddress() +
         "\n📦 固件版本: " + otaGetVersion();
-      if (coredumpHasData()) {
-        time_t ct = coredumpGetCrashTime();
+      if (s_cachedHasCrash) {
+        time_t ct = s_cachedCrashTime;
         if (ct > 0) {
           char timeBuf[20];
           struct tm tmInfo;
