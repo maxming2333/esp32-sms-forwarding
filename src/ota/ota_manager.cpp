@@ -84,7 +84,7 @@ static String fetchLatestTag() {
     {
         HTTPClient verHttp;
         WiFiClientSecure verTls;
-        beginHttpClient(verHttp, verTls, OTA_LATEST_URL);
+        beginHttpClient(verHttp, verTls, (String(OTA_RELEASES_BASE_URL) + "/latest").c_str());
         verHttp.setTimeout(OTA_HTTP_TIMEOUT_MS);
         verHttp.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
         int verCode = verHttp.GET();
@@ -108,7 +108,7 @@ static void checkVersionTask(void* /*param*/) {
     g_state    = OtaState::CHECKING;
     g_progress = 0;
     g_message  = "正在查询最新版本...";
-    LOG("OTA", "版本检查: %s", OTA_LATEST_URL);
+    LOG("OTA", "版本检查: %s/latest", OTA_RELEASES_BASE_URL);
 
     g_latestVer  = fetchLatestTag();
     g_inProgress = false;

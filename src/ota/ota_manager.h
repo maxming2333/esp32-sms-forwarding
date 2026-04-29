@@ -21,11 +21,8 @@ struct OtaStatusPayload {
     String   latestVersion  = "";     // 版本检查后的最新版本号（检查前为空串）
 };
 
-// 在线升级地址常量（修改此处即可变更升级源）
+// 在线升级地址常量（修改此处即可变更升级源；latest 版本检查地址为此值 + "/latest"）
 static const char* const OTA_RELEASES_BASE_URL = "https://github.com/maxming2333/esp32-sms-forwarding/releases";
-
-// 版本检查地址（latest 重定向）
-static const char* const OTA_LATEST_URL = "https://github.com/maxming2333/esp32-sms-forwarding/releases/latest";
 
 // FreeRTOS 任务栈大小（字节）
 // HTTPS 下载 + OTA 写入涉及 TLS 握手及较深的调用栈，适当增大以防溢出
