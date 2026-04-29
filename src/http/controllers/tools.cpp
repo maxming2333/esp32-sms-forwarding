@@ -1,6 +1,7 @@
 #include "tools.h"
 #include "config/config.h"
 #include "logger.h"
+#include <Preferences.h>
 #include "sms/sms.h"
 #include "sim/sim_dispatcher.h"
 #include "wifi/wifi_manager.h"
@@ -464,6 +465,24 @@ void exportCoreDumpController(AsyncWebServerRequest* request) {
 
 void coredumpUpdateLastKnownTime(time_t t) {
   s_rtcLastKnownTime = t;
+  Preferences prefs;
+  if (prefs.begin("sms_config", false)) {
+    prefs.putLong("cdLastTs", (long)t);
+    prefs.end();
+  }
+}
+
+void coredumpInit() {
+  // RTC_DATA_ATTR 在 panic 重启后非零，断电重启后归零。
+  // 断电场景下从 NVS 恢复最后已知时间，使崩溃时间估算在断电后仍可用。
+  if (s_rtcLastKnownTime == 0) {
+    Preferences prefs;
+    if (prefs.begin("sms_config", true)) {
+      long saved = prefs.getLong("cdLastTs", 0);
+      prefs.end();
+      if (saved > 0) s_rtcLastKnownTime = (time_t)saved;
+    }
+  }
 }
 
 bool coredumpHasData() {

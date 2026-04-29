@@ -94,6 +94,7 @@ void setup() {
 
   initConcatBuffer();
   loadConfig();
+  coredumpInit();  // 断电重启时从 NVS 恢复崩溃时间估算
   loadRebootSchedule(rebootSchedule);
   esp_task_wdt_reset();
 
