@@ -537,6 +537,7 @@
           </div>
           <div class="result-box" id="rebootResult"></div>
         </div>
+        <div id="coredumpInfoCard" style="display: none; margin-bottom: 12px; padding: 10px; background: #fff3e0; border-left: 4px solid #ff9800; border-radius: 4px; color: #e65100; font-size: 13px;"></div>
         <div class="form-group" style="margin-top: 15px">
           <button
             type="button"
@@ -718,6 +719,25 @@
             result.textContent = "❌ 请求失败: " + e.message;
             btn.disabled = false;
           });
+      }
+
+      function loadCoredumpInfo() {
+        fetch("/api/tools/coredump/info")
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (!d.hasCoredump) return;
+            var card = document.getElementById("coredumpInfoCard");
+            var timeStr = "时间未知";
+            if (d.crashTime && d.crashTime > 0) {
+              timeStr = new Date(d.crashTime * 1000).toLocaleString();
+            }
+            var sizeStr = d.size ? (" / 文件大小: " + (d.size >= 1048576
+              ? (d.size / 1048576).toFixed(2) + " MB"
+              : (d.size / 1024).toFixed(1) + " KB")) : "";
+            card.innerHTML = "⚠️ <strong>检测到崩溃记录</strong><br>崩溃时间：" + timeStr + "（近似）" + sizeStr;
+            card.style.display = "block";
+          })
+          .catch(function () {});
       }
 
       function exportCoreDump() {
@@ -1157,6 +1177,7 @@
       document.addEventListener("DOMContentLoaded", function () {
         loadStatus();
         loadSoc();
+        loadCoredumpInfo();
         startOtaVersionCheck();
       });
 
