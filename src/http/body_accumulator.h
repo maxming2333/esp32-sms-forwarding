@@ -17,7 +17,12 @@ inline bool httpAccumulateBody(AsyncWebServerRequest* request,
   *outBody = nullptr;
   size_t expected = total > 0 ? total : index + len;
   if (expected > maxBytes || index + len > maxBytes) {
-    if (index == 0 || request->_tempObject == nullptr) {
+    bool shouldSendError = (index == 0 || request->_tempObject != nullptr);
+    if (request->_tempObject != nullptr) {
+      free(request->_tempObject);
+      request->_tempObject = nullptr;
+    }
+    if (shouldSendError) {
       request->send(413, "application/json", "{\"ok\":false,\"error\":\"请求体超过大小限制\"}");
     }
     return false;

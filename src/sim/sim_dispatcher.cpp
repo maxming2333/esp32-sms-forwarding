@@ -134,17 +134,17 @@ static void simReaderTask(void*) {
                         LOG("SIM", "[URC-during-cmd] %s", line.c_str());
                         routeURC(line);
                     } else {
-                    appendResponseLine(s_activeCmd, line);
+                        appendResponseLine(s_activeCmd, line);
 
-                    if (isFinalOkLine(line)) {
-                        s_activeCmd->isOk = true;
-                        xSemaphoreGive(s_activeCmd->doneSem);
-                        s_activeCmd = nullptr;
-                    } else if (isFinalErrorLine(line)) {
-                        s_activeCmd->isOk = false;
-                        xSemaphoreGive(s_activeCmd->doneSem);
-                        s_activeCmd = nullptr;
-                    }
+                        if (isFinalOkLine(line)) {
+                            s_activeCmd->isOk = true;
+                            xSemaphoreGive(s_activeCmd->doneSem);
+                            s_activeCmd = nullptr;
+                        } else if (isFinalErrorLine(line)) {
+                            s_activeCmd->isOk = false;
+                            xSemaphoreGive(s_activeCmd->doneSem);
+                            s_activeCmd = nullptr;
+                        }
                     }
                 } else {
                     routeURC(line);
