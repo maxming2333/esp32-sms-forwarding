@@ -33,3 +33,4 @@ void smsStartProcTask();
 // smsHandlePDU 仅将 PDU 字符串入队，立即返回，不在 sim_reader 栈上处理
 void smsHandleCMTHeader();                     ///< +CMT: 头部到达，切换到等待 PDU 状态
 void smsHandlePDU(const String& line);         ///< CMT 之后的 PDU 数据行处理（入队）
+void smsHandleUSSD(const String& line);        ///< +CUSD: USSD 消息上报处理

@@ -69,6 +69,7 @@ enum class SimUrcType : uint8_t {
     CMT_PDU    = 3,  ///< CMT 之后的 PDU 数据行
     CPIN_READY = 4,  ///< "+CPIN: READY"
     SIM_REMOVE = 5,  ///< "+CPIN: NOT INSERTED" / "+SIMCARD:0"
+    CUSD       = 6,  ///< "+CUSD:" USSD 消息上报
 };
 
 /** URC 回调函数类型。line 为原始 URC 行内容（不含 CR/LF）。 */

@@ -161,7 +161,8 @@ static bool waitCEREG() {
 static bool runModemConfig() {
   if (!runInitStep("AT+CNMI=2,2,0,0,0", 1000, 3, "CNMI")) return false;
   if (!runInitStep("AT+CMGF=0", 1000, 3, "CMGF")) return false;
-  runInitStep("AT+CLIP=1", 1000, 3, "CLIP");  // 启用主叫号码上报，失败不阻断初始化
+  runInitStep("AT+CLIP=1", 1000, 3, "CLIP");   // 启用主叫号码上报，失败不阻断初始化
+  runInitStep("AT+CUSD=1", 1000, 3, "CUSD");   // 启用 USSD 主动上报，失败不阻断初始化
   return true;
 }
 
@@ -420,6 +421,7 @@ static void onUrc(SimUrcType type, const String& line) {
     case SimUrcType::CLIP:       callHandleCLIP(line);      break;
     case SimUrcType::CMT:        smsHandleCMTHeader();      break;
     case SimUrcType::CMT_PDU:    smsHandlePDU(line);        break;
+    case SimUrcType::CUSD:       smsHandleUSSD(line);       break;
     case SimUrcType::CPIN_READY: simHandleURC(line);        break;
     case SimUrcType::SIM_REMOVE: simHandleURC(line);        break;
     default:                                                 break;

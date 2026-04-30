@@ -300,19 +300,394 @@ static void processAdminCommand(const char* sender, const char* text) {
 }
 
 // 将 PDU DCS 字节转换为人类可读的短信类型标签
-// 参考 GSM 03.38 §4: General data coding group (bits 7-6 = 00)
-// bit 4 (0x10): 1 = 消息类型位有意义; bits 1-0: 消息类别
+// 参考 GSM 03.38:
+//   Data coding / message class group (bits 7-4 = 1111): 0xF0-0xFF，Class 0-3
+//   General data coding group (bits 7-6 = 00): bit 4 指示类别位是否有效
 static String smsClassLabel(int dcs) {
-  // 仅处理 General data coding group (bits 7-6 = 00)
-  if ((dcs & 0xC0) != 0x00) return "普通短信";
-  // bit 4 未置位表示无类别信息
-  if (!(dcs & 0x10)) return "普通短信";
+  // 包含 class 信息的两种分组：0xF0-0xFF（bits7-4=1111）或 0x10-0x3F（bits7-6=00 且 bit4=1）
+  bool hasClass = ((dcs & 0xF0) == 0xF0) ||
+                  ((dcs & 0xC0) == 0x00 && (dcs & 0x10));
+  if (!hasClass) return "普通短信";
   switch (dcs & 0x03) {
-    case 0: return "Class 0（即显短信）";
-    case 1: return "Class 1";
-    case 2: return "Class 2（SIM存储）";
-    case 3: return "Class 3";
+    case 0:  return "Class 0（即显短信）";
+    case 1:  return "Class 1";
+    case 2:  return "Class 2（SIM存储）";
+    case 3:  return "Class 3";
     default: return "普通短信";
+  }
+}
+
+// ---------- WAP Push / 8-bit 数据消息解析 ----------
+
+// 读取 WSP uintvar（续读标志位7，低7位有效），*nc = 消耗字节数
+static uint32_t wspReadUintVar(const uint8_t* buf, int len, int* nc) {
+  uint32_t val = 0; int i = 0;
+  for (; i < 5 && i < len; i++) {
+    val = (val << 7) | (buf[i] & 0x7F);
+    if (!(buf[i] & 0x80)) { i++; break; }
+  }
+  if (nc) *nc = i;
+  return val;
+}
+
+// 读取 MMS Value-length（0-30 直接长度，31=Length-quote+uintvar），*nc = 消耗字节数
+static uint32_t mmsReadValueLen(const uint8_t* buf, int len, int* nc) {
+  if (len <= 0) { if (nc) *nc = 0; return 0; }
+  if (buf[0] == 0x1F) {
+    int consumed;
+    uint32_t val = wspReadUintVar(buf + 1, len - 1, &consumed);
+    if (nc) *nc = 1 + consumed;
+    return val;
+  }
+  if (nc) *nc = 1;
+  return buf[0];
+}
+
+// 读取 null 结尾的字符串，*nc = 消耗字节数（含 null）
+static String wspReadStr(const uint8_t* buf, int len, int* nc) {
+  String s; int i = 0;
+  for (; i < len && buf[i] != 0; i++) s += (char)buf[i];
+  if (i < len) i++;
+  if (nc) *nc = i;
+  return s;
+}
+
+// 扫描字节流，提取所有长度 >= minLen 的连续可打印字符串（ASCII + UTF-8）
+// 用于 WBXML 等二进制格式的 best-effort 内容提取
+static String wspScanStrings(const uint8_t* buf, int len, int minLen = 4) {
+  String result; int i = 0;
+  while (i < len) {
+    uint8_t c = buf[i];
+    if (!((c >= 0x20 && c < 0x7F) || c >= 0xC2)) { i++; continue; }
+    String seg; int j = i;
+    while (j < len) {
+      uint8_t b = buf[j];
+      if      (b >= 0x20 && b < 0x7F)                                         { seg += (char)b; j++; }
+      else if (b >= 0xC2 && b <= 0xDF && j+1 < len && (buf[j+1]&0xC0)==0x80) { seg += (char)b; seg += (char)buf[j+1]; j += 2; }
+      else if (b >= 0xE0 && b <= 0xEF && j+2 < len)                           { seg += (char)b; seg += (char)buf[j+1]; seg += (char)buf[j+2]; j += 3; }
+      else break;
+    }
+    if ((int)seg.length() >= minLen) {
+      if (result.length() > 0) result += "\n";
+      result += seg;
+    }
+    i = (j > i) ? j : i + 1;
+  }
+  return result;
+}
+
+// 解析 MMS 通知 PDU (m-notification-ind)，提取 From / Subject / 大小 / 下载地址
+static String parseMmsNotificationBody(const uint8_t* body, int len) {
+  String from, subject, location;
+  int32_t msgSize = -1;
+  int p = 0;
+  while (p < len) {
+    uint8_t field = body[p++];
+    if (p >= len) break;
+    switch (field) {
+      // 固定单字节 short-integer 值字段
+      case 0x8C: // X-Mms-Message-Type
+      case 0x8E: // X-Mms-MMS-Version
+      case 0x86: // X-Mms-Delivery-Report
+      case 0x98: // X-Mms-Reply-Charging
+        p++;
+        break;
+      case 0x8D: { // X-Mms-Transaction-Id: text string
+        int n; wspReadStr(body + p, len - p, &n); p += n;
+        break;
+      }
+      case 0x83: { // X-Mms-Content-Location: text string (URI)
+        int n; location = wspReadStr(body + p, len - p, &n); p += n;
+        break;
+      }
+      case 0x8A: { // X-Mms-Message-Class: short-integer or text
+        if (body[p] & 0x80) p++;
+        else { int n; wspReadStr(body + p, len - p, &n); p += n; }
+        break;
+      }
+      case 0x8F: { // X-Mms-Message-Size: Long-integer（长度字节 + N 字节大端整数）
+        uint8_t numBytes = body[p++];
+        if (numBytes <= 8 && p + numBytes <= len) {
+          uint32_t sz = 0;
+          for (int i = 0; i < numBytes; i++) sz = (sz << 8) | body[p++];
+          msgSize = (int32_t)sz;
+        } else p += numBytes;
+        break;
+      }
+      case 0x88: { // X-Mms-Expiry: Value-length + token + Long-integer
+        int consumed; uint32_t vlen = mmsReadValueLen(body + p, len - p, &consumed);
+        p += consumed + (int)vlen;
+        break;
+      }
+      case 0x96: { // Subject: Encoded-string-value
+        uint8_t v = body[p];
+        if (v > 0 && v <= 0x1F) {
+          // Value-length + [charset] + text
+          int consumed; uint32_t vlen = mmsReadValueLen(body + p, len - p, &consumed);
+          p += consumed;
+          int end = p + (int)vlen; if (end > len) end = len;
+          // 跳过 charset（short-int: bit7=1; 否则 uintvar）
+          if (p < end) {
+            if (body[p] & 0x80) p++;
+            else { int nc; wspReadUintVar(body + p, end - p, &nc); p += nc; }
+          }
+          int n; subject = wspReadStr(body + p, end - p, &n);
+          p = end;
+        } else {
+          int n; subject = wspReadStr(body + p, len - p, &n); p += n;
+        }
+        break;
+      }
+      case 0x89: { // From: Value-length + (0x80 address-present + Encoded-string-value | 0x81 insert-address)
+        int consumed; uint32_t vlen = mmsReadValueLen(body + p, len - p, &consumed);
+        p += consumed;
+        int end = p + (int)vlen; if (end > len) end = len;
+        if (p < end && body[p] == 0x80) { // address-present-token
+          p++;
+          uint8_t sv = (p < end) ? body[p] : 0;
+          if (sv > 0 && sv <= 0x1F) {
+            // Value-length + charset + text
+            int nc; uint32_t svlen = mmsReadValueLen(body + p, end - p, &nc);
+            p += nc;
+            int send = p + (int)svlen; if (send > end) send = end;
+            if (p < send && (body[p] & 0x80)) p++; // skip short-int charset
+            int n; from = wspReadStr(body + p, send - p, &n);
+          } else {
+            int n; from = wspReadStr(body + p, end - p, &n);
+          }
+        }
+        p = end;
+        break;
+      }
+      default: {
+        // 未知字段：尝试跳过（short-int 1字节，否则按文本跳过），失败则停止
+        if (body[p] & 0x80) p++;
+        else { int n; wspReadStr(body + p, len - p, &n); p += n; }
+        break;
+      }
+    }
+  }
+  String result;
+  if (from.length() > 0)    result += "发件人: " + from + "\n";
+  if (subject.length() > 0) result += "主题: " + subject + "\n";
+  if (msgSize > 0) {
+    char sz[32];
+    if (msgSize >= 1024) snprintf(sz, sizeof(sz), "大小: %ldKB\n", (long)(msgSize / 1024));
+    else                 snprintf(sz, sizeof(sz), "大小: %ldB\n",  (long)msgSize);
+    result += sz;
+  }
+  if (location.length() > 0) result += "下载地址: " + location;
+  result.trim();
+  return result.length() > 0 ? result : "【彩信通知，字段解析失败】";
+}
+
+// 解析 WSP Push PDU，输出 typeLabel（outLabel）和消息内容（outContent）
+// WSP Push: Transaction-ID(1) + PDU-Type(1) + Headers-Length(uintvar) + Content-Type + Headers + Body
+static void parseWspMessage(const uint8_t* wsp, int wspLen, String& outLabel, String& outContent) {
+  outLabel   = "WAP Push";
+  outContent = "【内容无法解析】";
+  if (wspLen < 3) return;
+  int p = 0;
+  p++; // Transaction ID
+  uint8_t pduType = wsp[p++];
+  if (pduType != 0x06 && pduType != 0x07) {
+    char buf[40]; snprintf(buf, sizeof(buf), "WAP Push（PDU类型=0x%02X）", pduType);
+    outLabel = buf; return;
+  }
+  // Headers-Length（uintvar）：Content-Type + Additional-Headers 的总字节数
+  int consumed;
+  uint32_t headersLen = wspReadUintVar(wsp + p, wspLen - p, &consumed);
+  p += consumed;
+  int bodyStart = p + (int)headersLen; // body 在所有 headers 之后
+  if (p >= wspLen) return;
+
+  // Content-Type 三种编码形式
+  uint8_t wellKnown = 0xFF;
+  String  typeStr;
+  uint8_t ct0 = wsp[p];
+  if (ct0 & 0x80) {
+    wellKnown = ct0 & 0x7F; p++;
+  } else if (ct0 > 0 && ct0 <= 0x1F) {
+    uint32_t vLen = ct0;
+    if (ct0 == 0x1F) { p++; vLen = wspReadUintVar(wsp+p, wspLen-p, &consumed); p += consumed; }
+    else              { p++; }
+    if (p < wspLen) {
+      uint8_t mt = wsp[p];
+      if (mt & 0x80) { wellKnown = mt & 0x7F; }
+      else           { int n; typeStr = wspReadStr(wsp + p, (int)vLen, &n); }
+    }
+  } else {
+    int n; typeStr = wspReadStr(wsp + p, wspLen - p, &n);
+  }
+
+  if (bodyStart > wspLen) bodyStart = wspLen;
+  const uint8_t* body = wsp + bodyStart;
+  int bodyLen = wspLen - bodyStart;
+
+  if (wellKnown != 0xFF) {
+    switch (wellKnown) {
+      case 0x02: // text/html
+        outLabel   = "WAP Push：HTML";
+        outContent = wspScanStrings(body, bodyLen);
+        if (outContent.length() == 0) outContent = "【HTML内容，无法提取文本】";
+        break;
+      case 0x03: { // text/plain
+        outLabel = "WAP Push：文本";
+        String s; for (int i = 0; i < bodyLen && body[i] != 0; i++) s += (char)body[i];
+        outContent = s.length() > 0 ? s : "【空文本内容】";
+        break;
+      }
+      case 0x2E: // text/vnd.wap.si（服务指示，WBXML）
+        outLabel   = "WAP Push：服务指示（SI）";
+        outContent = wspScanStrings(body, bodyLen);
+        if (outContent.length() == 0) outContent = "【SI消息，内容无法提取】";
+        break;
+      case 0x2F: // text/vnd.wap.sl（服务加载，WBXML）
+        outLabel   = "WAP Push：服务加载（SL）";
+        outContent = wspScanStrings(body, bodyLen);
+        if (outContent.length() == 0) outContent = "【SL消息，URL无法提取】";
+        break;
+      case 0x35: // application/vnd.wap.connectivity-wbxml（OMA CP）
+        outLabel   = "WAP Push：设备配置（OMA CP）";
+        outContent = "【运营商推送网络配置，内容为二进制格式】";
+        break;
+      case 0x3E: // application/vnd.wap.mms-message（彩信通知）
+        outLabel   = "WAP Push：彩信通知";
+        outContent = parseMmsNotificationBody(body, bodyLen);
+        break;
+      case 0x44: // application/vnd.syncml.notification
+        outLabel   = "WAP Push：SyncML通知";
+        outContent = "【SyncML同步通知，内容为二进制格式】";
+        break;
+      default: {
+        char buf[48]; snprintf(buf, sizeof(buf), "WAP Push（well-known=0x%02X）", wellKnown);
+        outLabel   = buf;
+        outContent = wspScanStrings(body, bodyLen);
+        if (outContent.length() == 0) outContent = "【内容无法解析】";
+        break;
+      }
+    }
+  } else {
+    outLabel   = typeStr.length() > 0 ? ("WAP Push：" + typeStr) : "WAP Push（未知类型）";
+    outContent = wspScanStrings(body, bodyLen);
+    if (outContent.length() == 0) {
+      char buf[64]; snprintf(buf, sizeof(buf), "【%s，内容无法解析】", typeStr.length() > 0 ? typeStr.c_str() : "未知类型");
+      outContent = buf;
+    }
+  }
+}
+
+// 从 SMS-DELIVER PDU hex 串中提取 8-bit UD 载荷和 UDH 目标端口
+// SMS-DELIVER 格式: SCA + PDU-TYPE + OA + PID + DCS + SCTS(7) + UDL + UD
+// 返回 false 表示 PDU 结构解析失败
+static bool extractRawUd8bit(const String& hexPdu, uint8_t* udBuf, int& udLen, uint16_t& destPort) {
+  destPort = 0;
+  udLen    = 0;
+  int hexLen = hexPdu.length();
+  if (hexLen < 4 || (hexLen & 1) != 0) return false;
+  int binLen = hexLen / 2;
+  if (binLen > 200) return false;
+
+  uint8_t bin[200];
+  for (int i = 0; i < binLen; i++) {
+    auto h = [](char c) -> uint8_t {
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+      return 0;
+    };
+    bin[i] = (h(hexPdu.charAt(i * 2)) << 4) | h(hexPdu.charAt(i * 2 + 1));
+  }
+
+  int p = 0;
+  // SCA（Service Centre Address）：长度字节 + SCA 内容
+  if (p >= binLen) return false;
+  p += 1 + bin[p];
+  // TP-PDU-TYPE：bit 6 = UDHI（User Data Header Indicator）
+  if (p >= binLen) return false;
+  bool udhi = (bin[p++] >> 6) & 1;
+  // Originating Address：长度（半字节数）+ TON/NPI(1) + 编码字节
+  if (p >= binLen) return false;
+  int oa_nibbles = bin[p++];
+  p += 1 + (oa_nibbles + 1) / 2;
+  // PID(1) + DCS(1)（已由 pdulib 获取，直接跳过）
+  p += 2;
+  // SCTS（时间戳，固定 7 字节）
+  p += 7;
+  // UDL（8-bit 模式下为字节数）
+  if (p >= binLen) return false;
+  int udl = bin[p++];
+  if (p + udl > binLen) return false;
+
+  int bodyStart = p;
+  int bodyLen   = udl;
+
+  if (udhi && udl > 0) {
+    int udhl   = bin[p];           // UDH 内容长度（不含自身）
+    int udhEnd = p + 1 + udhl;
+    // 遍历 IEI 记录，查找 Application Port Addressing
+    int q = p + 1;
+    while (q + 1 < udhEnd && q + 1 < binLen) {
+      uint8_t iei     = bin[q++];
+      uint8_t iei_len = bin[q++];
+      if (q + iei_len > binLen) break;
+      if (iei == 0x05 && iei_len >= 4) {
+        // 16-bit Application Port: dest_hi, dest_lo, src_hi, src_lo
+        destPort = ((uint16_t)bin[q] << 8) | bin[q + 1];
+      } else if (iei == 0x04 && iei_len >= 2) {
+        // 8-bit Application Port: dest, src
+        destPort = bin[q];
+      }
+      q += iei_len;
+    }
+    bodyStart = udhEnd;
+    bodyLen   = udl - (1 + udhl);
+    if (bodyLen < 0) bodyLen = 0;
+  }
+
+  int copyLen = bodyLen < 160 ? bodyLen : 160;
+  memcpy(udBuf, bin + bodyStart, copyLen);
+  udLen = copyLen;
+  return true;
+}
+
+// 处理 8-bit 编码的 SMS（WAP Push / 应用端口短信 / 其他数据消息）
+static void handleRawDataSms(const String& hexPdu, int dcs, const char* sender, const char* timestamp) {
+  String classInfo;
+  if (((dcs & 0xF0) == 0xF0 || ((dcs & 0xC0) == 0x00 && (dcs & 0x10))) && (dcs & 0x03) == 0)
+    classInfo = "Class 0（即显短信）";
+
+  uint8_t  udBuf[160];
+  int      udLen    = 0;
+  uint16_t destPort = 0;
+
+  if (!extractRawUd8bit(hexPdu, udBuf, udLen, destPort)) {
+    LOG("SMS", "8-bit PDU 手动解析失败 (DCS=0x%02X)", dcs);
+    String label = classInfo.length() > 0 ? (classInfo + "·数据消息") : "数据消息";
+    processSmsContent(sender, "【内容无法解析】", timestamp, MsgTypeInfo(MSG_TYPE_SMS, label));
+    return;
+  }
+
+  if (destPort == 2948 || destPort == 2949) {
+    // WAP Push 标准端口：2948(0x0B84) / 2949(0x0B85)
+    String wapLabel, wapContent;
+    parseWspMessage(udBuf, udLen, wapLabel, wapContent);
+    String label = classInfo.length() > 0 ? (wapLabel + "（" + classInfo + "）") : wapLabel;
+    LOG("SMS", "WAP Push 端口=%u 类型=%s", destPort, label.c_str());
+    processSmsContent(sender, wapContent.c_str(), timestamp, MsgTypeInfo(MSG_TYPE_SMS, label));
+  } else if (destPort != 0) {
+    char buf[48]; snprintf(buf, sizeof(buf), "应用端口消息（端口=%u）", destPort);
+    String label = classInfo.length() > 0 ? (classInfo + "·" + String(buf)) : String(buf);
+    String content = wspScanStrings(udBuf, udLen);
+    if (content.length() == 0) content = "【二进制内容，无法显示】";
+    LOG("SMS", "应用端口短信 端口=%u DCS=0x%02X", destPort, dcs);
+    processSmsContent(sender, content.c_str(), timestamp, MsgTypeInfo(MSG_TYPE_SMS, label));
+  } else {
+    String label = classInfo.length() > 0 ? (classInfo + "·8-bit数据") : "8-bit数据消息";
+    String content = wspScanStrings(udBuf, udLen);
+    if (content.length() == 0) content = "【二进制内容，无法显示】";
+    LOG("SMS", "8-bit 数据消息（无端口）DCS=0x%02X", dcs);
+    processSmsContent(sender, content.c_str(), timestamp, MsgTypeInfo(MSG_TYPE_SMS, label));
   }
 }
 
@@ -367,6 +742,13 @@ static void processPduLine(const String& line) {
 
   String classLabel = smsClassLabel(pdu.getDCS());
   LOG("SMS", "短信类型: %s (DCS=0x%02X)", classLabel.c_str(), pdu.getDCS());
+
+  // 8-bit data encoding → WAP Push / 应用端口短信 / 其他数据消息
+  // pdulib 对 8-bit 载荷无法正确解码，绕过文本解码路径单独处理
+  if ((pdu.getDCS() & DCS_ALPHABET_MASK) == DCS_8BIT_ALPHABET_MASK) {
+    handleRawDataSms(line, pdu.getDCS(), pdu.getSender(), pdu.getTimeStamp());
+    return;
+  }
 
   int* concatInfo = pdu.getConcatInfo();
   int refNumber   = concatInfo[0];
@@ -423,6 +805,96 @@ void smsHandleCMTHeader() {
   LOG("SMS", "检测到+CMT，等待PDU数据...");
 }
 
+// +CUSD: <n>[,<str>[,<dcs>]]
+// n: 0=无需更多用户输入 1=需要更多输入 2=USSD已终止 3=操作不支持
+// str: 消息内容（可能为 GSM-7 或 UCS-2 BCD 串，视 dcs 而定）
+// dcs: 数据编码方案（可选），15=GSM-7，72=UCS-2
+void smsHandleUSSD(const String& line) {
+  LOG("SMS", "收到 USSD 消息: %s", line.c_str());
+
+  // 格式: +CUSD: <n>,"<str>",<dcs>  或  +CUSD: <n>
+  int colon = line.indexOf(':');
+  if (colon < 0) return;
+  String payload = line.substring(colon + 1);
+  payload.trim();
+
+  // 提取 n（第一个参数）
+  int n = -1;
+  if (payload.length() > 0 && payload.charAt(0) >= '0' && payload.charAt(0) <= '9') {
+    n = payload.charAt(0) - '0';
+  }
+
+  // 提取消息内容字符串（引号内）
+  String content;
+  int q1 = payload.indexOf('"');
+  int q2 = (q1 >= 0) ? payload.indexOf('"', q1 + 1) : -1;
+  if (q1 >= 0 && q2 > q1) {
+    content = payload.substring(q1 + 1, q2);
+  }
+
+  // 提取 dcs（第三个参数）
+  int dcs = -1;
+  if (q2 > 0) {
+    int comma = payload.indexOf(',', q2 + 1);
+    if (comma >= 0) {
+      String dcsStr = payload.substring(comma + 1);
+      dcsStr.trim();
+      dcs = dcsStr.toInt();
+    }
+  }
+
+  // UCS-2 编码（dcs=72 或 dcs=8）：hex 串转 UTF-8
+  if ((dcs == 72 || dcs == 8) && content.length() > 0 && (content.length() % 4) == 0) {
+    String decoded;
+    bool isHex = true;
+    for (unsigned int i = 0; i < content.length(); i++) {
+      char c = content.charAt(i);
+      if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'))) {
+        isHex = false; break;
+      }
+    }
+    if (isHex) {
+      // 将 4 字符 hex 段解码为 UCS-2，再转 UTF-8
+      for (unsigned int i = 0; i + 3 < content.length(); i += 4) {
+        auto h = [](char c) -> uint16_t {
+          if (c >= '0' && c <= '9') return c - '0';
+          if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+          if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+          return 0;
+        };
+        uint16_t cp = (h(content.charAt(i)) << 12) | (h(content.charAt(i+1)) << 8)
+                    | (h(content.charAt(i+2)) <<  4) |  h(content.charAt(i+3));
+        if (cp < 0x0080) {
+          decoded += (char)cp;
+        } else if (cp < 0x0800) {
+          decoded += (char)(0xC0 | (cp >> 6));
+          decoded += (char)(0x80 | (cp & 0x3F));
+        } else {
+          decoded += (char)(0xE0 | (cp >> 12));
+          decoded += (char)(0x80 | ((cp >> 6) & 0x3F));
+          decoded += (char)(0x80 | (cp & 0x3F));
+        }
+      }
+      content = decoded;
+    }
+  }
+
+  String statusLabel;
+  switch (n) {
+    case 0: statusLabel = "USSD"; break;
+    case 1: statusLabel = "USSD（需要回复）"; break;
+    case 2: statusLabel = "USSD（会话已终止）"; break;
+    default: statusLabel = "USSD"; break;
+  }
+
+  if (content.length() == 0) {
+    LOG("SMS", "USSD 无消息内容，n=%d", n);
+    return;
+  }
+
+  processSmsContent("运营商", content.c_str(), "", MsgTypeInfo(MSG_TYPE_SMS, statusLabel));
+}
+
 void smsHandlePDU(const String& line) {
   // 仅入队，立即返回，不在 sim_reader 任务栈上执行任何解码逻辑
   if (s_pduQueue == nullptr) return;
@@ -460,16 +932,14 @@ void smsStartProcTask() {
     LOG("SMS", "PDU 队列创建失败");
     return;
   }
-  xTaskCreate(smsProcTask, "sms_proc", SMS_PROC_TASK_STACK,
-              nullptr, SMS_PROC_TASK_PRIO, nullptr);
+  xTaskCreate(smsProcTask, "sms_proc", SMS_PROC_TASK_STACK, nullptr, SMS_PROC_TASK_PRIO, nullptr);
 }
 
 void checkConcatTimeout() {
   unsigned long now = millis();
   for (int i = 0; i < MAX_CONCAT_MESSAGES; i++) {
     if (concatBuffer[i].inUse && (now - concatBuffer[i].firstPartTime >= CONCAT_TIMEOUT_MS)) {
-      LOG("SMS", "[告警] 长短信超时，丢弃不完整消息（参考号=%d，已收到=%d/%d）",
-              concatBuffer[i].refNumber, concatBuffer[i].receivedParts, concatBuffer[i].totalParts);
+      LOG("SMS", "[告警] 长短信超时，丢弃不完整消息（参考号=%d，已收到=%d/%d）", concatBuffer[i].refNumber, concatBuffer[i].receivedParts, concatBuffer[i].totalParts);
       clearConcatSlot(i);
     }
   }

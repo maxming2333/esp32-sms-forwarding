@@ -22,6 +22,7 @@ static bool isUrcLine(const String& line) {
     if (s_waitingPdu)                          return true;
     if (line.indexOf("+CPIN:") >= 0)           return true;
     if (line.startsWith("+SIMCARD:"))          return true;
+    if (line.startsWith("+CUSD:"))             return true;
     return false;
 }
 
@@ -54,6 +55,10 @@ static void routeURC(const String& line) {
     }
     if (line.indexOf("+CPIN: NOT INSERTED") >= 0 || line.startsWith("+SIMCARD:0")) {
         s_urcCb(SimUrcType::SIM_REMOVE, line);
+        return;
+    }
+    if (line.startsWith("+CUSD:")) {
+        s_urcCb(SimUrcType::CUSD, line);
         return;
     }
 }
