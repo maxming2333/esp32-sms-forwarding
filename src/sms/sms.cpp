@@ -24,8 +24,13 @@ static constexpr int  SMS_PROC_TASK_PRIO   = 2;
 // PDU 字符串最大长度（SIM 模组单条 PDU hex 串最长 ~340 字符）
 static constexpr int  PDU_MAX_LEN          = 400;
 
+// 队列项类型：PDU（短信） vs USSD（运营商交互上报）。
+// 二者均需在 sms_proc 任务上下文执行推送，避免阻塞 SIM reader task。
+enum class SmsItemKind : uint8_t { PDU = 0, USSD = 1 };
+
 struct PduQueueItem {
-    char pdu[PDU_MAX_LEN + 1];
+    SmsItemKind kind;
+    char        data[PDU_MAX_LEN + 1];
 };
 
 static QueueHandle_t s_pduQueue = nullptr;
@@ -816,12 +821,9 @@ void smsHandleCMTHeader() {
   LOG("SMS", "检测到+CMT，等待PDU数据...");
 }
 
-// +CUSD: <n>[,<str>[,<dcs>]]
-// n: 0=无需更多用户输入 1=需要更多输入 2=USSD已终止 3=操作不支持
-// str: 消息内容（可能为 GSM-7 或 UCS-2 BCD 串，视 dcs 而定）
-// dcs: 数据编码方案（可选），15=GSM-7，72=UCS-2
-void smsHandleUSSD(const String& line) {
-  LOG("SMS", "收到 USSD 消息: %s", line.c_str());
+// 解析并推送 USSD 消息（在 sms_proc 任务上下文执行，不可在 reader task 调用）。
+static void processUssdLine(const String& line) {
+  LOG("SMS", "处理 USSD 消息: %s", line.c_str());
 
   // 格式: +CUSD: <n>,"<str>",<dcs>  或  +CUSD: <n>
   int colon = line.indexOf(':');
@@ -906,6 +908,29 @@ void smsHandleUSSD(const String& line) {
   processSmsContent("运营商", content.c_str(), "", MsgTypeInfo(MSG_TYPE_SMS, statusLabel));
 }
 
+// +CUSD: <n>[,<str>[,<dcs>]] —— URC 入口（在 SIM reader task 上下文）
+// 关键约束：本函数不可同步发起推送（HTTPS 阻塞 5–30s 会让 reader task
+// 错过后续 +CMT/RING URC，且黑名单检查可能导致死锁）。仅入队，立即返回。
+void smsHandleUSSD(const String& line) {
+  if (s_pduQueue == nullptr) {
+    LOG("SMS", "USSD 到达但 sms_proc 未启动，丢弃");
+    return;
+  }
+  if (line.length() > PDU_MAX_LEN) {
+    LOG("SMS", "USSD 行过长（%u），丢弃", (unsigned)line.length());
+    return;
+  }
+  PduQueueItem* item = new PduQueueItem();
+  if (!item) { LOG("SMS", "USSD 队列项分配失败"); return; }
+  item->kind = SmsItemKind::USSD;
+  strncpy(item->data, line.c_str(), PDU_MAX_LEN);
+  item->data[PDU_MAX_LEN] = '\0';
+  if (xQueueSend(s_pduQueue, &item, 0) != pdTRUE) {
+    delete item;
+    LOG("SMS", "SMS 队列已满，丢弃 USSD");
+  }
+}
+
 void smsHandlePDU(const String& line) {
   // 仅入队，立即返回，不在 sim_reader 任务栈上执行任何解码逻辑
   if (s_pduQueue == nullptr) return;
@@ -915,8 +940,9 @@ void smsHandlePDU(const String& line) {
   }
   PduQueueItem* item = new PduQueueItem();
   if (!item) { LOG("SMS", "PDU 队列项分配失败"); return; }
-  strncpy(item->pdu, line.c_str(), PDU_MAX_LEN);
-  item->pdu[PDU_MAX_LEN] = '\0';
+  item->kind = SmsItemKind::PDU;
+  strncpy(item->data, line.c_str(), PDU_MAX_LEN);
+  item->data[PDU_MAX_LEN] = '\0';
   BaseType_t sent = xQueueSend(s_pduQueue, &item, 0);
   if (sent != pdTRUE) {
     delete item;
@@ -930,7 +956,11 @@ static void smsProcTask(void*) {
   for (;;) {
     PduQueueItem* item = nullptr;
     if (xQueueReceive(s_pduQueue, &item, portMAX_DELAY) == pdTRUE && item != nullptr) {
-      processPduLine(String(item->pdu));
+      if (item->kind == SmsItemKind::USSD) {
+        processUssdLine(String(item->data));
+      } else {
+        processPduLine(String(item->data));
+      }
       delete item;
     }
     esp_task_wdt_reset();

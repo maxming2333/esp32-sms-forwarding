@@ -8,6 +8,7 @@
 // ---------- 模块内部静态变量 ----------
 
 static volatile bool          s_pending          = false;
+static volatile bool          s_dispatchPending  = false;  // 由 reader task 设置，main loop callTick 处理
 static String                 s_callerNumber     = "未知号码";
 static volatile unsigned long s_clipWaitUntilMs  = 0;
 static unsigned long          s_lastNotifyMs     = 0;
@@ -33,6 +34,7 @@ static void dispatchCallNotification(const String& callerNum) {
 
 void callInit() {
     s_pending         = false;
+    s_dispatchPending = false;
     s_callerNumber    = "未知号码";
     s_clipWaitUntilMs = 0;
     s_lastNotifyMs    = 0;
@@ -46,6 +48,7 @@ void callHandleRING() {
         return;
     }
     s_pending         = true;
+    s_dispatchPending = false;
     s_callerNumber    = "未知号码";
     s_clipWaitUntilMs = millis() + CALL_CLIP_WAIT_MS;
     s_clccAttempted   = false;
@@ -69,8 +72,12 @@ void callHandleCLIP(const String& line) {
         }
     }
 
-    s_pending = false;
-    dispatchCallNotification(s_callerNumber);
+    // 关键：本函数运行在 SIM reader task 上下文，不可在此发起阻塞 HTTPS 推送
+    // （sendPushNotification → 黑名单检查 → simSendCommand 会自我死锁，
+    //  且推送阶段 5–30 秒内 reader task 无法处理后续 +CMT/RING URC）。
+    // 仅设置标志，由 main loop callTick() 派发。
+    s_pending         = false;
+    s_dispatchPending = true;
 }
 
 // 解析 AT+CLCC 响应，提取 MT（来电方向=1）通话的号码
@@ -101,6 +108,13 @@ static String parseCLCC(const String& resp) {
 }
 
 void callTick() {
+    // CLIP 已被 reader task 标记，统一在主循环派发，避免 reader task 阻塞
+    if (s_dispatchPending) {
+        s_dispatchPending = false;
+        dispatchCallNotification(s_callerNumber);
+        return;
+    }
+
     if (!s_pending) return;
     unsigned long now = millis();
 

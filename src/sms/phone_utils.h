@@ -11,16 +11,22 @@
 #pragma once
 #include <Arduino.h>
 #include "config/config.h"
-#include "sim/sim_dispatcher.h"
+#include "sim/sim.h"
 
 /**
  * @brief 从本机号码推断区号（如 "86"），用于短号码补齐比对。
- *        本机号码通过 simQueryPhoneNumber() 实时获取。
- *        若无法推断，返回空字符串。
+ *        使用 simGetPhoneNum() 返回的缓存值（在 SIM_READY 后由 sim 模块抓取并定期更新）。
+ *
+ * 关键设计约束：
+ *   - 不可在此调用 simQueryPhoneNumber() / simSendCommand()。
+ *     来电 +CLIP URC 路径在 SIM reader task 中执行，
+ *     若再发起 AT 指令将自我阻塞 reader task → 死锁。
+ *   - 每个传入号码做黑名单匹配时会调用本函数 N+1 次（N=黑名单条目数），
+ *     必须保持 O(1) 且零阻塞。
  */
 inline String phoneExtractAreaCode() {
-    String phone = simQueryPhoneNumber(2000);
-    if (phone.length() == 0 || phone.equals("未知号码")) return "";
+    String phone = simGetPhoneNum();
+    if (phone.length() == 0 || phone.equals("未知") || phone.equals("未知号码")) return "";
     if (phone.startsWith("+")) phone = phone.substring(1);
     if (phone.startsWith("00")) phone = phone.substring(2);
     if ((int)phone.length() <= 11) return "";
@@ -30,12 +36,11 @@ inline String phoneExtractAreaCode() {
 /**
  * @brief 规范化电话号码（去除 + / 00 前缀，补齐区号）。
  */
-inline String phoneNormalize(const String& raw) {
+inline String phoneNormalize(const String& raw, const String& areaCode) {
     String s = raw;
     s.trim();
     if (s.startsWith("+")) s = s.substring(1);
     if (s.startsWith("00")) s = s.substring(2);
-    String areaCode = phoneExtractAreaCode();
     if (areaCode.length() > 0 && (int)s.length() <= 11) {
         s = areaCode + s;
     }
@@ -47,11 +52,15 @@ inline String phoneNormalize(const String& raw) {
  *
  * @param incoming  来电/来信号码（原始格式）
  * @return          true 表示命中黑名单，应拦截
+ *
+ * @note 区号在函数入口预先抓取一次（O(1)），避免每条黑名单条目都重复获取。
  */
 inline bool phoneMatchesBlacklist(const String& incoming) {
-    String normIn = phoneNormalize(incoming);
+    if (config.blacklistCount <= 0) return false;
+    String areaCode = phoneExtractAreaCode();
+    String normIn = phoneNormalize(incoming, areaCode);
     for (int i = 0; i < config.blacklistCount; i++) {
-        if (normIn.equals(phoneNormalize(config.blacklist[i]))) {
+        if (normIn.equals(phoneNormalize(config.blacklist[i], areaCode))) {
             return true;
         }
     }

@@ -217,10 +217,18 @@ void simDispatcherStart() {
 bool simSendCommand(const char* cmd, unsigned long timeoutMs,
                     String* outResp, bool prio) {
     if (s_queue == nullptr) return false;
+    if (cmd == nullptr) return false;
 
     SimCmdSlot slot;
-    strncpy(slot.cmd, cmd, 63);
-    slot.cmd[63]      = '\0';
+    size_t cmdLen = strlen(cmd);
+    if (cmdLen >= sizeof(slot.cmd)) {
+        // AT 指令超长会被静默截断 → 模组返回 ERROR 难以排查；改为直接拒绝
+        LOG("SIM", "AT 指令超长（%u ≥ %u），拒绝执行: %.32s...",
+            (unsigned)cmdLen, (unsigned)sizeof(slot.cmd), cmd);
+        return false;
+    }
+    memcpy(slot.cmd, cmd, cmdLen);
+    slot.cmd[cmdLen]  = '\0';
     slot.timeoutMs    = timeoutMs;
     slot.respBuf[0]   = '\0';
     slot.isOk         = false;

@@ -41,6 +41,18 @@ void timeModuleSyncFromSIM() {
     return;
   }
 
+  // 字段范围校验，避免 mktime 收到 yy=99/mo=99 等异常值
+  if (yy < 0 || yy > 99 || mo < 1 || mo > 12 || dd < 1 || dd > 31 ||
+      hh < 0 || hh > 23 || mi < 0 || mi > 59 || ss < 0 || ss > 60) {
+    LOG("Time", "CCLK 时间字段越界，原始: %s", ts.c_str());
+    return;
+  }
+  // tz 单位为 1/4 小时，合法范围 ±14h → ±56；超出强制归零
+  if (tz < -56 || tz > 56) {
+    LOG("Time", "CCLK 时区字段越界 (%d)，按 0 处理", tz);
+    tz = 0;
+  }
+
   // 构建 struct tm（本地时间，基于 SIM 时区）
   struct tm t;
   memset(&t, 0, sizeof(t));
