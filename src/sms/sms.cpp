@@ -17,7 +17,7 @@
 // 队列容量 16 足以应对突发的多条长短信
 static constexpr int  SMS_QUEUE_DEPTH      = 16;
 // sms_proc 任务栈：包含 pdulib decode（gsm7bit[160]），多次 LOG（char msg[256] 各一帧），
-// 以及 assembleConcatSms/sendPushNotification 等，分配 8192 字节留足余量
+// 以及 assembleConcatSms/Push::send 等，分配 8192 字节留足余量
 static constexpr int  SMS_PROC_TASK_STACK  = 8192;
 static constexpr int  SMS_PROC_TASK_PRIO   = 2;
 
@@ -178,7 +178,7 @@ static bool sendOnePDU(const char* phoneNumber, const char* message, unsigned sh
   LOG("SMS", "PDU长度=%d，PDU前16字符: %.16s", pduLen, pdu.getSMS());
 
   String cmgsCmd = "AT+CMGS="; cmgsCmd += pduLen;
-  if (!simPauseReader()) {
+  if (!SimDispatcher::pauseReader()) {
     LOG("SMS", "无法暂停 SIM reader，取消发送");
     return false;
   }
@@ -195,7 +195,7 @@ static bool sendOnePDU(const char* phoneNumber, const char* message, unsigned sh
     }
   }
   if (!gotPrompt) {
-    simResumeReader();
+    SimDispatcher::resumeReader();
     LOG("SMS", "未收到>提示符");
     return false;
   }
@@ -218,30 +218,30 @@ static bool sendOnePDU(const char* phoneNumber, const char* message, unsigned sh
       }
       // OK 是事务完成的最终标志
       if (resp.indexOf("OK") >= 0) {
-        simResumeReader();
+        SimDispatcher::resumeReader();
         LOG("SMS", "短信发送成功");
         return true;
       }
       // 没有 +CMGS: 就出现 ERROR，才是真正失败
       if (!cmgsSeen && resp.indexOf("ERROR") >= 0) {
-        simResumeReader();
+        SimDispatcher::resumeReader();
         LOG("SMS", "短信发送失败，响应: %s", resp.c_str());
         return false;
       }
     }
     // +CMGS: 已确认但 2s 内没收到 OK（modem 已入队）→ 视为成功
     if (cmgsSeen && millis() - cmgsSeenAt >= 2000) {
-      simResumeReader();
+      SimDispatcher::resumeReader();
       LOG("SMS", "短信发送成功（+CMGS已确认）");
       return true;
     }
   }
-  simResumeReader();
+  SimDispatcher::resumeReader();
   LOG("SMS", "短信发送超时，已收到: %s", resp.c_str());
   return false;
 }
 
-bool sendSMSPDU(const char* phoneNumber, const char* message) {
+bool Sms::sendPDU(const char* phoneNumber, const char* message) {
   LOG("SMS", "准备发送短信到 %s", phoneNumber);
 
   bool ucs2      = hasMultibyte(message);
@@ -291,7 +291,7 @@ static void processAdminCommand(const char* sender, const char* text) {
     if (sc > fc + 1) {
       String targetPhone = cmd.substring(fc + 1, sc); targetPhone.trim();
       String smsContent  = cmd.substring(sc + 1);     smsContent.trim();
-      bool ok = sendSMSPDU(targetPhone.c_str(), smsContent.c_str());
+      bool ok = Sms::sendPDU(targetPhone.c_str(), smsContent.c_str());
       String subject = ok ? "短信发送成功" : "短信发送失败";
       String body = "命令: " + cmd + "\n目标号码: " + targetPhone + "\n结果: " + (ok ? "成功" : "失败");
       LOG("SMS", "%s: %s", subject.c_str(), body.c_str());
@@ -723,7 +723,7 @@ static void processSmsContent(const char* sender, const char* text, const char* 
     }
   }
 
-  sendPushNotification(String(sender), String(text), String(timestamp), msgType);
+  Push::send(String(sender), String(text), String(timestamp), msgType);
 }
 
 static bool isHexString(const String& str) {
@@ -806,7 +806,7 @@ static void processPduLine(const String& line) {
 
 // ---------- public API ----------
 
-void initConcatBuffer() {
+void Sms::initConcatBuffer() {
   for (int i = 0; i < MAX_CONCAT_MESSAGES; i++) {
     concatBuffer[i].inUse         = false;
     concatBuffer[i].receivedParts = 0;
@@ -817,7 +817,7 @@ void initConcatBuffer() {
   }
 }
 
-void smsHandleCMTHeader() {
+void Sms::handleCMTHeader() {
   LOG("SMS", "检测到+CMT，等待PDU数据...");
 }
 
@@ -911,7 +911,7 @@ static void processUssdLine(const String& line) {
 // +CUSD: <n>[,<str>[,<dcs>]] —— URC 入口（在 SIM reader task 上下文）
 // 关键约束：本函数不可同步发起推送（HTTPS 阻塞 5–30s 会让 reader task
 // 错过后续 +CMT/RING URC，且黑名单检查可能导致死锁）。仅入队，立即返回。
-void smsHandleUSSD(const String& line) {
+void Sms::handleUSSD(const String& line) {
   if (s_pduQueue == nullptr) {
     LOG("SMS", "USSD 到达但 sms_proc 未启动，丢弃");
     return;
@@ -931,7 +931,7 @@ void smsHandleUSSD(const String& line) {
   }
 }
 
-void smsHandlePDU(const String& line) {
+void Sms::handlePDU(const String& line) {
   // 仅入队，立即返回，不在 sim_reader 任务栈上执行任何解码逻辑
   if (s_pduQueue == nullptr) return;
   if (line.length() > PDU_MAX_LEN) {
@@ -967,7 +967,7 @@ static void smsProcTask(void*) {
   }
 }
 
-void smsStartProcTask() {
+void Sms::startProcTask() {
   s_pduQueue = xQueueCreate(SMS_QUEUE_DEPTH, sizeof(PduQueueItem*));
   if (!s_pduQueue) {
     LOG("SMS", "PDU 队列创建失败");
@@ -976,7 +976,7 @@ void smsStartProcTask() {
   xTaskCreate(smsProcTask, "sms_proc", SMS_PROC_TASK_STACK, nullptr, SMS_PROC_TASK_PRIO, nullptr);
 }
 
-void checkConcatTimeout() {
+void Sms::checkConcatTimeout() {
   unsigned long now = millis();
   for (int i = 0; i < MAX_CONCAT_MESSAGES; i++) {
     if (concatBuffer[i].inUse && (now - concatBuffer[i].firstPartTime >= CONCAT_TIMEOUT_MS)) {

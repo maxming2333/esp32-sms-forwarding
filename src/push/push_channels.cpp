@@ -67,7 +67,7 @@ static void beginHttpClient(HTTPClient& http, WiFiClientSecure& tlsClient, const
 
 // ---------- channel implementations ----------
 
-bool sendPostJson(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+bool PushChannels::sendPostJson(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   HTTPClient http;
   WiFiClientSecure tlsClient;
   beginHttpClient(http, tlsClient, ch.url);
@@ -91,7 +91,7 @@ bool sendPostJson(const PushChannel& ch, const String& sender, const String& mes
   return code >= 200 && code < 300;
 }
 
-bool sendBark(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+bool PushChannels::sendBark(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   HTTPClient http;
   WiFiClientSecure tlsClient;
   beginHttpClient(http, tlsClient, ch.url);
@@ -112,7 +112,7 @@ bool sendBark(const PushChannel& ch, const String& sender, const String& message
   return code >= 200 && code < 300;
 }
 
-bool sendGet(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+bool PushChannels::sendGet(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   String url = ch.url;
   url += (url.indexOf('?') == -1) ? "?" : "&";
   url += "sender=" + urlEncode(sender);
@@ -130,7 +130,7 @@ bool sendGet(const PushChannel& ch, const String& sender, const String& message,
   return code >= 200 && code < 300;
 }
 
-bool sendDingtalk(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+bool PushChannels::sendDingtalk(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   String webhookUrl = ch.url;
 
   if (ch.key1.length() > 0) {
@@ -163,7 +163,7 @@ bool sendDingtalk(const PushChannel& ch, const String& sender, const String& mes
   return code >= 200 && code < 300;
 }
 
-bool sendPushPlus(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+bool PushChannels::sendPushPlus(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   String url = ch.url.length() > 0 ? ch.url : "http://www.pushplus.plus/send";
   HTTPClient http;
   WiFiClientSecure tlsClient;
@@ -197,7 +197,7 @@ bool sendPushPlus(const PushChannel& ch, const String& sender, const String& mes
   return code >= 200 && code < 300;
 }
 
-bool sendServerChan(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+bool PushChannels::sendServerChan(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   String url = ch.url.length() > 0 ? ch.url : ("https://sctapi.ftqq.com/" + ch.key1 + ".send");
   HTTPClient http;
   WiFiClientSecure tlsClient;
@@ -216,7 +216,7 @@ bool sendServerChan(const PushChannel& ch, const String& sender, const String& m
   return code >= 200 && code < 300;
 }
 
-bool sendCustom(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+bool PushChannels::sendCustom(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   // 类型7（POST请求）：使用 renderedBody（非空）或空 body（FR-008）
   HTTPClient http;
   WiFiClientSecure tlsClient;
@@ -231,7 +231,7 @@ bool sendCustom(const PushChannel& ch, const String& sender, const String& messa
   return code >= 200 && code < 300;
 }
 
-bool sendFeishu(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+bool PushChannels::sendFeishu(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   HTTPClient http;
   WiFiClientSecure tlsClient;
   beginHttpClient(http, tlsClient, ch.url);
@@ -260,7 +260,7 @@ bool sendFeishu(const PushChannel& ch, const String& sender, const String& messa
   return code >= 200 && code < 300;
 }
 
-bool sendGotify(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+bool PushChannels::sendGotify(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   String url = ch.url;
   if (!url.endsWith("/")) url += "/";
   url += "message?token=" + ch.key1;
@@ -284,7 +284,7 @@ bool sendGotify(const PushChannel& ch, const String& sender, const String& messa
   return code >= 200 && code < 300;
 }
 
-bool sendTelegram(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+bool PushChannels::sendTelegram(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   String baseUrl = ch.url.length() > 0 ? ch.url : "https://api.telegram.org";
   if (baseUrl.endsWith("/")) baseUrl.remove(baseUrl.length() - 1);
   String url = baseUrl + "/bot" + ch.key2 + "/sendMessage";
@@ -308,7 +308,7 @@ bool sendTelegram(const PushChannel& ch, const String& sender, const String& mes
   return code >= 200 && code < 300;
 }
 
-bool sendWechatWork(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+bool PushChannels::sendWechatWork(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   String webhookUrl = ch.url;
 
   if (ch.key1.length() > 0) {
@@ -344,16 +344,16 @@ bool sendWechatWork(const PushChannel& ch, const String& sender, const String& m
   return true;
 }
 
-bool sendSmsPush(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
+bool PushChannels::sendSmsPush(const PushChannel& ch, const String& sender, const String& message, const String& timestamp, const String& renderedBody) {
   String content;
   if (renderedBody.length() > 0) {
     content = renderedBody;
   } else {
     content = "[转发]发件人: " + sender + "\n内容: " + message;
   }
-  // sendSMSPDU 内部自动处理长短信拆分，无需手动截断
+  // Sms::sendPDU 内部自动处理长短信拆分，无需手动截断
   LOG("Push", "SMS备份推送到: %s", ch.url.c_str());
-  bool ok = sendSMSPDU(ch.url.c_str(), content.c_str());
+  bool ok = Sms::sendPDU(ch.url.c_str(), content.c_str());
   if (!ok) LOG("Push", "SMS备份推送失败");
   return ok;
 }

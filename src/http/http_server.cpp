@@ -29,14 +29,14 @@ static AsyncMiddlewareFunction g_conditionalAuth([](AsyncWebServerRequest* req, 
   next();
 });
 
-void refreshAuthCredentials() {
+void HttpServer::refreshAuthCredentials() {
   g_authMiddleware.setUsername(config.webUser.c_str());
   g_authMiddleware.setPassword(config.webPass.c_str());
   g_authMiddleware.generateHash();
   LOG("HTTP", "认证凭证已更新");
 }
 
-void setupHttpServer(AsyncWebServer& server) {
+void HttpServer::setup(AsyncWebServer& server) {
   g_authMiddleware.setUsername(config.webUser.c_str());
   g_authMiddleware.setPassword(config.webPass.c_str());
   g_authMiddleware.setAuthType(AsyncAuthType::AUTH_BASIC);

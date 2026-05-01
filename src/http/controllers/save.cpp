@@ -1,5 +1,6 @@
 #include "save.h"
 #include "../http_server.h"
+#include "../json_response.h"
 #include "config/config.h"
 #include "wifi/wifi_manager.h"
 #include "logger.h"
@@ -43,7 +44,7 @@ void saveController(AsyncWebServerRequest* request) {
     int pushCount = request->getParam("pushCount", true)->value().toInt();
     if (pushCount < 1) pushCount = 1;
     if (pushCount > MAX_PUSH_CHANNELS) {
-      request->send(400, "application/json", "{\"ok\":false,\"message\":\"pushCount 超过最大限制\"}");
+      JsonResp::err(request, 400, "pushCount 超过最大限制");
       return;
     }
     config.pushCount = pushCount;
@@ -68,20 +69,15 @@ void saveController(AsyncWebServerRequest* request) {
     }
   }
 
-  saveConfig();
-  refreshAuthCredentials();
+  ConfigStore::save();
+  HttpServer::refreshAuthCredentials();
 
   LOG("HTTP", "配置已保存，发送成功响应");
 
-  JsonDocument doc;
-  doc["ok"] = true;
-  doc["message"] = "配置保存成功";
-  String body;
-  serializeJson(doc, body);
-  request->send(200, "application/json", body);
+  JsonResp::ok(request, "配置保存成功");
 
-  if (isConfigValid()) {
-    LOG("HTTP", "配置已更新，设备地址: %s", getDeviceUrl().c_str());
+  if (ConfigStore::isValid()) {
+    LOG("HTTP", "配置已更新，设备地址: %s", WifiManager::deviceUrl().c_str());
   }
 }
 
@@ -96,14 +92,9 @@ void saveRebootController(AsyncWebServerRequest* request) {
   if (request->hasParam("rbIntervalH", true))
     rebootSchedule.intervalH = (uint16_t)constrain(request->getParam("rbIntervalH", true)->value().toInt(), 1, 168);
 
-  saveRebootSchedule(rebootSchedule);
+  ConfigStore::saveReboot(rebootSchedule);
 
   LOG("HTTP", "定时重启配置已保存");
 
-  JsonDocument doc;
-  doc["ok"] = true;
-  doc["message"] = "定时重启配置保存成功";
-  String body;
-  serializeJson(doc, body);
-  request->send(200, "application/json", body);
+  JsonResp::ok(request, "定时重启配置保存成功");
 }

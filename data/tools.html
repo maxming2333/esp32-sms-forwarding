@@ -993,12 +993,12 @@
           .then(function (data) {
             btn.disabled = false;
             btn.textContent = "📨 发送短信";
-            if (data.success) {
+            if (data.ok) {
               result.className = "result-box result-success";
               result.innerHTML = "✅ 发送成功！<br>" + (data.message || "");
             } else {
               result.className = "result-box result-error";
-              result.innerHTML = "❌ 发送失败<br>" + (data.message || "");
+              result.innerHTML = "❌ 发送失败<br>" + (data.error || data.message || "");
             }
           })
           .catch(function (e) {
@@ -1021,12 +1021,12 @@
             return resp.json();
           })
           .then(function (data) {
-            if (data.success) {
+            if (data.ok) {
               result.className = "result-box result-info";
               result.innerHTML = data.message;
             } else {
               result.className = "result-box result-error";
-              result.innerHTML = "❌ 查询失败<br>" + data.message;
+              result.innerHTML = "❌ 查询失败<br>" + (data.error || data.message || "");
             }
           })
           .catch(function (e) {
@@ -1056,12 +1056,12 @@
           .then(function (data) {
             btn.disabled = false;
             btn.textContent = "📡 点我消耗一点流量";
-            if (data.success) {
+            if (data.ok) {
               result.className = "result-box result-success";
               result.innerHTML = "✅ Ping 成功！<br>" + data.message;
             } else {
               result.className = "result-box result-error";
-              result.innerHTML = "❌ Ping 失败<br>" + data.message;
+              result.innerHTML = "❌ Ping 失败<br>" + (data.error || data.message || "");
             }
           })
           .catch(function (e) {
@@ -1084,12 +1084,12 @@
             return resp.json();
           })
           .then(function (data) {
-            if (data.success) {
+            if (data.ok) {
               result.className = "result-box result-info";
               result.innerHTML = data.message;
             } else {
               result.className = "result-box result-error";
-              result.innerHTML = "❌ 查询失败: " + data.message;
+              result.innerHTML = "❌ 查询失败: " + (data.error || data.message || "");
             }
           })
           .catch(function (e) {
@@ -1119,12 +1119,12 @@
           })
           .then(function (data) {
             btn.disabled = false;
-            if (data.success) {
+            if (data.ok) {
               result.className = "result-box result-success";
               result.innerHTML = "✅ " + data.message;
             } else {
               result.className = "result-box result-error";
-              result.innerHTML = "❌ 切换失败: " + data.message;
+              result.innerHTML = "❌ 切换失败: " + (data.error || data.message || "");
             }
           })
           .catch(function (e) {
@@ -1177,12 +1177,13 @@
           .then(function (data) {
             btn.disabled = false;
             btn.textContent = "发送";
-            var lines = (data.message || "").split("\n");
-            var type = data.success ? "resp" : "error";
+            var msg = data.ok ? (data.message || "") : (data.error || data.message || "");
+            var lines = msg.split("\n");
+            var type = data.ok ? "resp" : "error";
             for (var l = 0; l < lines.length; l++) {
               if (lines[l].trim()) addLog(lines[l], type);
             }
-            if (!data.success && !data.message) {
+            if (!data.ok && !msg) {
               addLog("执行失败", "error");
             }
           })
@@ -1373,7 +1374,7 @@
             return r.json();
           })
           .then(function (d) {
-            if (d.success) {
+            if (d.ok) {
               startOtaPolling();
             } else {
               btn.disabled = false;
@@ -1381,7 +1382,7 @@
               var p = document.getElementById("otaProgress");
               p.className = "result-box result-error";
               p.style.display = "block";
-              p.textContent = "❌ " + (d.message || "启动升级失败");
+              p.textContent = "❌ " + (d.error || d.message || "启动升级失败");
             }
           })
           .catch(function (e) {
@@ -1442,13 +1443,13 @@
           .then(function (d) {
             btn.disabled = false;
             otaInUpgrade = false;
-            if (d.success) {
+            if (d.ok) {
               progress.className = "result-box result-success";
               progress.textContent =
                 "✅ " + (d.message || "上传成功，设备即将重启");
             } else {
               progress.className = "result-box result-error";
-              progress.textContent = "❌ " + (d.message || "上传失败");
+              progress.textContent = "❌ " + (d.error || d.message || "上传失败");
             }
           })
           .catch(function (e) {
@@ -1503,13 +1504,13 @@
             btn.disabled = false;
             document.getElementById("otaUploadBtn").disabled = false;
             otaInUpgrade = false;
-            if (d.success) {
+            if (d.ok) {
               progress.className = "result-box result-success";
               progress.textContent =
                 "✅ " + (d.message || "上传成功，设备即将重启");
             } else {
               progress.className = "result-box result-error";
-              progress.textContent = "❌ " + (d.message || "上传失败");
+              progress.textContent = "❌ " + (d.error || d.message || "上传失败");
             }
           })
           .catch(function (e) {

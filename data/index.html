@@ -1438,7 +1438,7 @@
               result.style.background = "";
               result.style.borderLeftColor = "";
               result.style.color = "";
-              result.textContent = "❌ 保存失败: " + (d.message || "");
+              result.textContent = "❌ 保存失败: " + (d.error || d.message || "");
             }
             result.style.display = "block";
           })

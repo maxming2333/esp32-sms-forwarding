@@ -1,6 +1,7 @@
 #include "ota.h"
 #include "ota/ota_manager.h"
 #include "http/body_accumulator.h"
+#include "http/json_response.h"
 #include "logger.h"
 #include <AsyncJson.h>
 #include <ArduinoJson.h>
@@ -31,12 +32,12 @@ static void serializeOtaStatus(const OtaStatusPayload& p, JsonObject& root) {
 // ── GET /api/ota/status ───────────────────────────────────────────
 void otaStatusController(AsyncWebServerRequest* request) {
     // 若当前空闲则自动触发版本检查（含防抖）
-    if (otaGetStatus().state == OtaState::IDLE) {
-        otaStartVersionCheck();
+    if (Ota::status().state == OtaState::IDLE) {
+        Ota::startVersionCheck();
     }
     AsyncJsonResponse* resp = new AsyncJsonResponse();
     JsonObject root = resp->getRoot();
-    OtaStatusPayload status = otaGetStatus();
+    OtaStatusPayload status = Ota::status();
     serializeOtaStatus(status, root);
     resp->setLength();
     request->send(resp);
@@ -44,12 +45,12 @@ void otaStatusController(AsyncWebServerRequest* request) {
 
 // ── GET /api/ota/version ──────────────────────────────────────────
 void otaVersionController(AsyncWebServerRequest* request) {
-    OtaStatusPayload status = otaGetStatus();
+    OtaStatusPayload status = Ota::status();
 
     // 每次请求时若当前空闲则触发新一轮版本检查（不使用缓存，保证显示最新版本）
     if (status.state == OtaState::IDLE) {
-        otaStartVersionCheck();
-        status = otaGetStatus();
+        Ota::startVersionCheck();
+        status = Ota::status();
     }
 
     AsyncJsonResponse* resp = new AsyncJsonResponse();
@@ -72,28 +73,17 @@ void otaStartController(AsyncWebServerRequest* request, uint8_t* data, size_t le
     targetTag.trim();
 
     if (targetTag.isEmpty()) {
-        request->send(400, "application/json", "{\"success\":false,\"message\":\"缺少或无效的 tag 参数\"}");
+        JsonResp::err(request, 400, "缺少或无效的 tag 参数");
         return;
     }
 
-    bool started = otaStartOnlineUpgrade(targetTag);
+    bool started = Ota::startOnlineUpgrade(targetTag);
     if (!started) {
-        AsyncJsonResponse* resp = new AsyncJsonResponse();
-        resp->setCode(409);
-        JsonObject root = resp->getRoot();
-        root["success"] = false;
-        root["message"] = "当前已有升级任务进行中，请稍候";
-        resp->setLength();
-        request->send(resp);
+        JsonResp::err(request, 409, "当前已有升级任务进行中，请稍候");
         return;
     }
 
-    AsyncJsonResponse* resp = new AsyncJsonResponse();
-    JsonObject root = resp->getRoot();
-    root["success"] = true;
-    root["message"] = "在线升级已开始";
-    resp->setLength();
-    request->send(resp);
+    JsonResp::ok(request, "在线升级已开始");
 }
 
 // ── POST /api/ota/upload — onUpload 回调（逐块写入） ─────────────
@@ -103,42 +93,24 @@ void otaUploadChunkController(AsyncWebServerRequest* request,
                               uint8_t* data,
                               size_t len,
                               bool final) {
-    bool ok = otaHandleUploadChunk(data, len, index, final);
+    bool ok = Ota::handleUploadChunk(data, len, index, final);
     if (!ok) {
         // 写入失败：立即发送 500（ESPAsyncWebServer 允许在 upload 回调中发送）
-        request->send(500, "application/json",
-                      "{\"success\":false,\"message\":\"固件写入失败\"}");
+        JsonResp::err(request, 500, "固件写入失败");
     }
 }
 
 // ── POST /api/ota/upload — onRequest 回调（发送最终响应） ─────────
 void otaUploadCompleteController(AsyncWebServerRequest* request) {
-    OtaStatusPayload status = otaGetStatus();
+    OtaStatusPayload status = Ota::status();
 
     if (status.state == OtaState::SUCCESS) {
-        AsyncJsonResponse* resp = new AsyncJsonResponse();
-        JsonObject root = resp->getRoot();
-        root["success"] = true;
-        root["message"] = "固件上传成功，设备即将重启";
-        resp->setLength();
-        request->send(resp);
+        JsonResp::ok(request, "固件上传成功，设备即将重启");
     } else if (status.state == OtaState::FAILED) {
-        AsyncJsonResponse* resp = new AsyncJsonResponse();
-        resp->setCode(500);
-        JsonObject root = resp->getRoot();
-        root["success"] = false;
-        root["message"] = status.message.isEmpty() ? "固件上传失败" : status.message;
-        resp->setLength();
-        request->send(resp);
+        JsonResp::err(request, 500, status.message.isEmpty() ? "固件上传失败" : status.message);
     } else {
         // 并发冲突或状态异常
-        AsyncJsonResponse* resp = new AsyncJsonResponse();
-        resp->setCode(409);
-        JsonObject root = resp->getRoot();
-        root["success"] = false;
-        root["message"] = "升级状态异常，请刷新后重试";
-        resp->setLength();
-        request->send(resp);
+        JsonResp::err(request, 409, "升级状态异常，请刷新后重试");
     }
 }
 
@@ -153,39 +125,21 @@ void otaUploadFsChunkController(AsyncWebServerRequest* request,
     if (request->hasHeader("Content-Length")) {
         totalSize = (size_t)request->header("Content-Length").toInt();
     }
-    bool ok = otaHandleLfsUploadChunk(data, len, index, totalSize, final);
+    bool ok = Ota::handleLfsUploadChunk(data, len, index, totalSize, final);
     if (!ok) {
-        request->send(500, "application/json",
-                      "{\"success\":false,\"message\":\"LittleFS 写入失败\"}");
+        JsonResp::err(request, 500, "LittleFS 写入失败");
     }
 }
 
 // ── POST /api/ota/upload-fs — onRequest 回调（发送最终响应） ───────
 void otaUploadFsCompleteController(AsyncWebServerRequest* request) {
-    OtaStatusPayload status = otaGetStatus();
+    OtaStatusPayload status = Ota::status();
 
     if (status.state == OtaState::SUCCESS) {
-        AsyncJsonResponse* resp = new AsyncJsonResponse();
-        JsonObject root = resp->getRoot();
-        root["success"] = true;
-        root["message"] = "Web UI 上传成功，设备即将重启";
-        resp->setLength();
-        request->send(resp);
+        JsonResp::ok(request, "Web UI 上传成功，设备即将重启");
     } else if (status.state == OtaState::FAILED) {
-        AsyncJsonResponse* resp = new AsyncJsonResponse();
-        resp->setCode(500);
-        JsonObject root = resp->getRoot();
-        root["success"] = false;
-        root["message"] = status.message.isEmpty() ? "LittleFS 上传失败" : status.message;
-        resp->setLength();
-        request->send(resp);
+        JsonResp::err(request, 500, status.message.isEmpty() ? "LittleFS 上传失败" : status.message);
     } else {
-        AsyncJsonResponse* resp = new AsyncJsonResponse();
-        resp->setCode(409);
-        JsonObject root = resp->getRoot();
-        root["success"] = false;
-        root["message"] = "升级状态异常，请刷新后重试";
-        resp->setLength();
-        request->send(resp);
+        JsonResp::err(request, 409, "升级状态异常，请刷新后重试");
     }
 }

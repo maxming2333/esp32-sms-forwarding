@@ -2,35 +2,45 @@
 #include <Arduino.h>
 #include "push.h"
 
-// 推送重试队列上限（超出时丢弃最旧条目）
-constexpr int PUSH_RETRY_QUEUE_MAX = 50;
+// 重试队列上限；超过则丢弃最早的任务（避免长时间无网导致内存爆炸）
+constexpr int           PUSH_RETRY_QUEUE_MAX     = 50;
+// 特殊 channelIndex 值：表示"全链路重试"，即重新走 Push::send() 的全部启用渠道
+// （而非单独某一个渠道）。用于"等待 SIM 号码就绪"等场景。
+constexpr int           PUSH_RETRY_FULL_CHAIN    = -1;
+// 重试节奏：每 5 秒 tick 一次队列
+constexpr unsigned long PUSH_RETRY_INTERVAL_MS   = 5000;
 
-// 特殊通道索引：代表整条推送链（重新完整执行 sendPushNotification）
-constexpr int PUSH_RETRY_FULL_CHAIN = -1;
-
-// 重试间隔（毫秒）
-constexpr unsigned long PUSH_RETRY_INTERVAL_MS = 5000;
-
-// 重试原因枚举
+// 重试原因
 enum class RetryReason : uint8_t {
-  SEND_FAILED    = 0,  // 发送失败，需要重试
-  WAITING_NUMBER = 1   // 本机号码未知，等待号码就绪
+  SEND_FAILED    = 0,    // 渠道发送失败（网络错误/HTTP 非 2xx 等）
+  WAITING_NUMBER = 1     // 推送时本机号码尚未就绪，等待 SIM 号码后再发送
 };
 
-// 重试任务描述
+// 单条重试任务：完整携带渲染上下文，便于队列异步执行
 struct PushRetryTask {
-  int           channelIndex;
+  int           channelIndex;     // 目标渠道索引；PUSH_RETRY_FULL_CHAIN 表示全链路
   String        sender;
   String        message;
   String        timestamp;
   MsgTypeInfo   msgType;
   RetryReason   reason    = RetryReason::SEND_FAILED;
-  unsigned long enqueueMs = 0;
+  unsigned long enqueueMs = 0;    // 入队时间，用于过期 / 节流
 };
 
-void pushRetryInit();
-void pushRetryEnqueue(int channelIndex, const String& sender, const String& message,
+// PushRetry：失败/等待型推送的重试调度器（队列 + 周期 tick）。
+class PushRetry {
+public:
+  // 初始化（清空队列）
+  static void init();
+
+  // 入队失败任务（默认 reason = SEND_FAILED）
+  static void enqueue(int channelIndex, const String& sender, const String& message,
                       const String& timestamp, const MsgTypeInfo& msgType);
-void pushRetryEnqueue(int channelIndex, const String& sender, const String& message,
+
+  // 入队任务（指定原因，例如 WAITING_NUMBER）
+  static void enqueue(int channelIndex, const String& sender, const String& message,
                       const String& timestamp, const MsgTypeInfo& msgType, RetryReason reason);
-void pushRetryTick();
+
+  // loop 周期调用：按 PUSH_RETRY_INTERVAL_MS 节流处理队列。
+  static void tick();
+};

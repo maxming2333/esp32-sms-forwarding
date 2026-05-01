@@ -1,7 +1,7 @@
 #include "status.h"
 #include "config/config.h"
 #include "sim/sim.h"
-#include "time/time_module.h"
+#include "time/time_sync.h"
 #include <AsyncJson.h>
 #include <ArduinoJson.h>
 #include <WiFi.h>
@@ -26,11 +26,11 @@ void statusController(AsyncWebServerRequest* request) {
   root["ip"]            = (localIp == IPAddress(0, 0, 0, 0)) ? WiFi.softAPIP().toString() : localIp.toString();
   root["wifiConnected"] = WiFi.isConnected();
   root["ssid"]          = WiFi.SSID();
-  root["configValid"]   = isConfigValid();
-  root["timeSynced"]    = timeModuleIsTimeSynced();
+  root["configValid"]   = ConfigStore::isValid();
+  root["timeSynced"]    = TimeSync::isSynced();
   root["uptime"]        = millis() / 1000;
 
-  SimState ss = simGetState();
+  SimState ss = Sim::state();
   root["simState"]      = (int)ss;
   root["simStateLabel"] = simStateLabel(ss);
 

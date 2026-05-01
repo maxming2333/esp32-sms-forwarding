@@ -5,7 +5,7 @@
 #include "logger.h"
 #include "config/config.h"
 #include "push/push.h"
-#include "time/time_module.h"
+#include "time/time_sync.h"
 #include <esp_task_wdt.h>
 
 // ---------- internal state ----------
@@ -44,8 +44,8 @@ static TrafficSM s_tsm;
 // ---------- T005: AT helpers ----------
 
 static bool sendATandWaitOK(const char* cmd, unsigned long timeout) {
-  if (simDispatcherRunning()) {
-    return simSendCommand(cmd, timeout, nullptr, false);
+  if (SimDispatcher::running()) {
+    return SimDispatcher::sendCommand(cmd, timeout, nullptr, false);
   }
   while (Serial1.available()) Serial1.read();
   Serial1.println(cmd);
@@ -90,7 +90,7 @@ static void simTrafficTick() {
       cmd += config.dataTraffic ? "1" : "0";
       cmd += ",1";
       LOG("SIM", "数据流量: 发送 %s", cmd.c_str());
-      bool ok = simSendCommand(cmd.c_str(), 6000, nullptr, false);
+      bool ok = SimDispatcher::sendCommand(cmd.c_str(), 6000, nullptr, false);
       if (ok) {
         LOG("SIM", "数据流量: AT+CGACT 成功");
         s_tsm.state = TS_DONE;
@@ -99,7 +99,7 @@ static void simTrafficTick() {
         // （软重启后上下文可能已被关闭，再次关闭会返回 ERROR）
         String cgactResp;
         bool alreadyInDesiredState = false;
-        if (simSendCommand("AT+CGACT?", 3000, &cgactResp, false)) {
+        if (SimDispatcher::sendCommand("AT+CGACT?", 3000, &cgactResp, false)) {
           String desiredPattern = String("+CGACT: 1,") + (config.dataTraffic ? "1" : "0");
           if (cgactResp.indexOf(desiredPattern) >= 0) {
             alreadyInDesiredState = true;
@@ -137,8 +137,8 @@ static void simTrafficTick() {
 
 static bool waitCEREG() {
   String resp;
-  if (simDispatcherRunning()) {
-    simSendCommand("AT+CEREG?", 2000, &resp, false);
+  if (SimDispatcher::running()) {
+    SimDispatcher::sendCommand("AT+CEREG?", 2000, &resp, false);
   } else {
     Serial1.println("AT+CEREG?");
     unsigned long start = millis();
@@ -193,9 +193,9 @@ static bool runInitSequence() {
   return runModemConfig() && runNetworkWait();
 }
 
-// ---------- T006: simInit ----------
+// ---------- T006: Sim::init ----------
 
-void simInit() {
+void Sim::init() {
   // 检测 SIM 卡是否存在（AT+CPIN? 3000ms）
   while (Serial1.available()) Serial1.read();
   Serial1.println("AT+CPIN?");
@@ -233,7 +233,7 @@ void simInit() {
 
   // 步骤2: 查询本机号码（AT+CNUM 读 SIM 卡 EF 文件，不需要射频）
   {
-    String num = simQueryPhoneNumber(3000);
+    String num = Sim::queryPhoneNumber(3000);
     if (num.length() > 0) {
       s_phoneNum    = num;
       s_numberReady = true;
@@ -256,7 +256,7 @@ void simInit() {
   LOG("SIM", "等待网络注册");
   if (runNetworkWait()) {
     // 步骤5: 网络就绪后尝试 SIM 时间同步
-    timeModuleSyncFromSIM();
+    TimeSync::syncFromSIM();
     s_state            = SIM_READY;
     s_tsm.state        = TS_PENDING;
     s_tsm.triggerMs    = millis();
@@ -268,21 +268,21 @@ void simInit() {
   }
 }
 
-// ---------- simGetState ----------
+// ---------- Sim::state ----------
 
-SimState simGetState() {
+SimState Sim::state() {
   return s_state;
 }
 
-// ---------- simHandleURC ----------
+// ---------- Sim::handleURC ----------
 
-void simHandleURC(const String& line) {
+void Sim::handleURC(const String& line) {
   if (line.indexOf("+CPIN: READY") >= 0) {
     if (s_state != SIM_READY && s_state != SIM_INITIALIZING) {
       s_needReinit = true;
       LOG("SIM", "检测到 SIM 就绪 URC，等待重新初始化");
       if (config.simNotifyEnabled) {
-        sendPushNotification("设备", "SIM 卡已就绪，设备将重新初始化 SIM 模块", timeModuleGetDateStr(), MsgTypeInfo(MSG_TYPE_SIM));
+        Push::send("设备", "SIM 卡已就绪，设备将重新初始化 SIM 模块", TimeSync::dateStr(), MsgTypeInfo(MSG_TYPE_SIM));
       }
     }
     return;
@@ -295,15 +295,15 @@ void simHandleURC(const String& line) {
     s_tsm        = TrafficSM{};
     LOG("SIM", "SIM 卡已拔出，状态已清除");
     if (config.simNotifyEnabled && prev == SIM_READY) {
-      sendPushNotification("设备", "SIM 卡已拔出，当前状态：未插入", timeModuleGetDateStr(), MsgTypeInfo(MSG_TYPE_SIM));
+      Push::send("设备", "SIM 卡已拔出，当前状态：未插入", TimeSync::dateStr(), MsgTypeInfo(MSG_TYPE_SIM));
     }
     return;
   }
 }
 
-// ---------- simTick ----------
+// ---------- Sim::tick ----------
 
-void simTick() {
+void Sim::tick() {
   if (s_needReinit) {
     s_needReinit = false;
     s_state      = SIM_INITIALIZING;
@@ -323,9 +323,9 @@ void simTick() {
   simTrafficTick();
 
   // T008: 本机号码重试查询（独立于 SIM 状态，只要调度器在线且号码未就绪就持续重试）
-  if (!s_numberReady && simDispatcherRunning() && millis() >= s_numRetryNext) {
+  if (!s_numberReady && SimDispatcher::running() && millis() >= s_numRetryNext) {
     LOG("SIM", "本机号码重试查询...");
-    String num = simQueryPhoneNumber(3000);
+    String num = Sim::queryPhoneNumber(3000);
     if (num.length() > 0) {
       s_phoneNum     = num;
       s_numberReady  = true;
@@ -339,7 +339,7 @@ void simTick() {
   }
 }
 
-// ---------- simFetchInfo ----------
+// ---------- Sim::fetchInfo ----------
 
 static String normalizeCarrier(const String& raw) {
   String lower = raw;
@@ -360,10 +360,10 @@ static String normalizeCarrier(const String& raw) {
   return raw;
 }
 
-void simFetchInfo() {
+void Sim::fetchInfo() {
   {
     String resp;
-    simSendCommand("AT+COPS?", 3000, &resp, false);
+    SimDispatcher::sendCommand("AT+COPS?", 3000, &resp, false);
     int start = resp.indexOf("+COPS:");
     if (start >= 0) {
       int q1 = resp.indexOf('"', start);
@@ -376,7 +376,7 @@ void simFetchInfo() {
   }
   {
     String resp;
-    simSendCommand("AT+CSQ", 2000, &resp, false);
+    SimDispatcher::sendCommand("AT+CSQ", 2000, &resp, false);
     int start = resp.indexOf("+CSQ:");
     if (start >= 0) {
       int csq = -1;
@@ -393,7 +393,7 @@ void simFetchInfo() {
     }
   }
   {
-    String num = simQueryPhoneNumber(3000);
+    String num = Sim::queryPhoneNumber(3000);
     if (num.length() > 0) {
       s_phoneNum     = num;
       s_numberReady  = true;
@@ -408,31 +408,67 @@ void simFetchInfo() {
 
 // ---------- Getter functions ----------
 
-String simGetCarrier()  { return s_carrier; }
-String simGetSignal()   { return s_signal; }
-String simGetPhoneNum() { return s_phoneNum; }
-bool simIsNumberReady() { return s_numberReady; }
+String Sim::carrier()  { return s_carrier; }
+String Sim::signal()   { return s_signal; }
+String Sim::phoneNum() { return s_phoneNum; }
+bool Sim::isNumberReady() { return s_numberReady; }
 
 // ---------- URC 路由（由 SIM reader task 回调调用） ----------
 
 static void onUrc(SimUrcType type, const String& line) {
   switch (type) {
-    case SimUrcType::RING:       callHandleRING();          break;
-    case SimUrcType::CLIP:       callHandleCLIP(line);      break;
-    case SimUrcType::CMT:        smsHandleCMTHeader();      break;
-    case SimUrcType::CMT_PDU:    smsHandlePDU(line);        break;
-    case SimUrcType::CUSD:       smsHandleUSSD(line);       break;
-    case SimUrcType::CPIN_READY: simHandleURC(line);        break;
-    case SimUrcType::SIM_REMOVE: simHandleURC(line);        break;
+    case SimUrcType::RING:       Call::handleRING();          break;
+    case SimUrcType::CLIP:       Call::handleCLIP(line);      break;
+    case SimUrcType::CMT:        Sms::handleCMTHeader();      break;
+    case SimUrcType::CMT_PDU:    Sms::handlePDU(line);        break;
+    case SimUrcType::CUSD:       Sms::handleUSSD(line);       break;
+    case SimUrcType::CPIN_READY: Sim::handleURC(line);        break;
+    case SimUrcType::SIM_REMOVE: Sim::handleURC(line);        break;
     default:                                                 break;
   }
 }
 
-// ---------- simStartReaderTask ----------
+// ---------- Sim::startReaderTask ----------
 
-void simStartReaderTask() {
-  smsStartProcTask();          // 先启动 sms_proc 任务和队列
-  simRegisterUrcCallback(onUrc);
-  simDispatcherStart();
+void Sim::startReaderTask() {
+  Sms::startProcTask();          // 先启动 sms_proc 任务和队列
+  SimDispatcher::registerUrcCallback(onUrc);
+  SimDispatcher::start();
   LOG("SIM", "SIM reader task 已启动");
+}
+
+// ---------- Sim::queryPhoneNumber ----------
+// 业务方法：通过 AT+CNUM 查询本机 MSISDN，并解析模组返回。
+// 调度仅由 SimDispatcher 负责（保证串口互斥与队列），解析归属于业务模块。
+
+String Sim::queryPhoneNumber(unsigned long timeoutMs) {
+  String resp;
+  if (!SimDispatcher::sendCommand("AT+CNUM", timeoutMs, &resp, false)) {
+    return "";
+  }
+
+  int start = resp.indexOf("+CNUM:");
+  if (start < 0) {
+    return "";
+  }
+
+  // +CNUM: "","13900001234",129
+  // 第一对引号为 alpha 名称（可为空），第二对为实际号码
+  int q1 = resp.indexOf('"', start);
+  int q2 = (q1 >= 0) ? resp.indexOf('"', q1 + 1) : -1;
+  int q3 = (q2 >= 0) ? resp.indexOf('"', q2 + 1) : -1;
+  int q4 = (q3 >= 0) ? resp.indexOf('"', q3 + 1) : -1;
+  if (q3 >= 0 && q4 > q3) {
+    return resp.substring(q3 + 1, q4);
+  }
+
+  // 兜底：部分模组 alpha 字段无引号，格式为 +CNUM: ,"13900001234",type
+  int idx = resp.indexOf(",\"", start);
+  if (idx >= 0) {
+    int ei = resp.indexOf('"', idx + 2);
+    if (ei > idx + 2) {
+      return resp.substring(idx + 2, ei);
+    }
+  }
+  return "";
 }

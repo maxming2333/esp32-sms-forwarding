@@ -9,7 +9,7 @@
 #include "config/config.h"
 #include "sim/sim.h"
 #include "call/call.h"
-#include "time/time_module.h"
+#include "time/time_sync.h"
 #include "sms/sms.h"
 #include "push/push.h"
 #include "push/push_retry.h"
@@ -91,32 +91,32 @@ void setup() {
   while (Serial1.available()) Serial1.read();
 
   // 时区初始化（须在 NTP/SIM 时间同步前调用）
-  timeModuleInit();
+  TimeSync::init();
 
-  initConcatBuffer();
-  loadConfig();
-  coredumpInit();  // 断电重启时从 NVS 恢复崩溃时间估算
-  loadRebootSchedule(rebootSchedule);
+  Sms::initConcatBuffer();
+  ConfigStore::load();
+  Coredump::init();  // 断电重启时从 NVS 恢复崩溃时间估算
+  ConfigStore::loadReboot(rebootSchedule);
   esp_task_wdt_reset();
 
-  simInit();
+  Sim::init();
   esp_task_wdt_reset();
 
   // WiFi
-  wifiManagerSetReconnectCallback([]{ timeModuleSyncNTP(); });
-  wifiManagerInit();
+  WifiManager::setReconnectCallback([]{ TimeSync::syncNTP(); });
+  WifiManager::init();
   esp_task_wdt_reset();
 
   // 时间同步：STA 模式下优先使用 NTP；AP 模式下等 SIM 就绪后从 NITZ 同步
-  if (wifiManagerGetMode() == WIFI_MODE_STA_CONNECTED) {
-    timeModuleSyncNTP();
-    if (timeModuleIsTimeSynced()) {
+  if (WifiManager::mode() == WIFI_MODE_STA_CONNECTED) {
+    TimeSync::syncNTP();
+    if (TimeSync::isSynced()) {
       LOG("WiFi", "NTP时间同步成功，UTC: %ld", (long)time(nullptr));
     } else {
       LOG("WiFi", "NTP时间同步失败，将在SIM就绪后通过NITZ同步");
     }
   } else {
-    LOG("WiFi", "AP模式，跳过NTP同步。请访问 %s 配置WiFi", getDeviceUrl().c_str());
+    LOG("WiFi", "AP模式，跳过NTP同步。请访问 %s 配置WiFi", WifiManager::deviceUrl().c_str());
   }
 
   // LittleFS — formatOnFail=true 保证首次烧录或分区损坏时自动格式化
@@ -129,15 +129,15 @@ void setup() {
   }
   esp_task_wdt_reset();
 
-  setupHttpServer(server);
-  otaInit();
+  HttpServer::setup(server);
+  Ota::init();
 
-  callInit();
-  pushRetryInit();
-  simStartReaderTask();
+  Call::init();
+  PushRetry::init();
+  Sim::startReaderTask();
 
   digitalWrite(LED_BUILTIN, LOW);
-  // 开机推送在 loop() 中检测 wifiManagerIsInitDone() 上升沿后自动安排
+  // 开机推送在 loop() 中检测 WifiManager::isInitDone() 上升沿后自动安排
 }
 
 void loop() {
@@ -145,22 +145,22 @@ void loop() {
     static unsigned long lastUrlPrint = 0;
     if (millis() - lastUrlPrint >= 3000) {
       lastUrlPrint = millis();
-      if (wifiManagerGetMode() == WIFI_MODE_AP_ACTIVE) {
-        LOG("HTTP", "⚠️ 当前号码: %s，请访问 %s 配置WiFi，或通过 BluFi BLE 配网（设备名: %s）", simGetPhoneNum().c_str(), getDeviceUrl().c_str(), getDeviceName().c_str());
+      if (WifiManager::mode() == WIFI_MODE_AP_ACTIVE) {
+        LOG("HTTP", "⚠️ 当前号码: %s，请访问 %s 配置WiFi，或通过 BluFi BLE 配网（设备名: %s）", Sim::phoneNum().c_str(), WifiManager::deviceUrl().c_str(), WifiManager::deviceName().c_str());
       } else {
-        LOG("HTTP", "⚠️ 当前号码: %s，请访问 %s 进行配置", simGetPhoneNum().c_str(), getDeviceUrl().c_str());
+        LOG("HTTP", "⚠️ 当前号码: %s，请访问 %s 进行配置", Sim::phoneNum().c_str(), WifiManager::deviceUrl().c_str());
       }
     }
   }
 
   // 开机推送：首次检测到 WiFi 初始化完成（STA 获取到 IP 或进入 AP 模式）后
   // 延迟 BOOT_PUSH_DELAY_MS 再触发，确保网络栈已就绪
-  if (!s_wifiInitWasSeen && wifiManagerIsInitDone()) {
+  if (!s_wifiInitWasSeen && WifiManager::isInitDone()) {
     s_wifiInitWasSeen = true;
-    if (isConfigValid()) {
-      s_cachedHasCrash     = coredumpHasData();
-      s_cachedCrashTime    = coredumpGetCrashTime();
-      s_cachedCrashVersion = coredumpGetCrashVersion();
+    if (ConfigStore::isValid()) {
+      s_cachedHasCrash     = Coredump::hasData();
+      s_cachedCrashTime    = Coredump::crashTime();
+      s_cachedCrashVersion = Coredump::crashVersion();
       s_bootPushPending = true;
       s_bootPushAfterMs = millis() + BOOT_PUSH_DELAY_MS;
       LOG("Push", "WiFi初始化完成，%lu ms 后触发开机推送", BOOT_PUSH_DELAY_MS);
@@ -173,9 +173,9 @@ void loop() {
     LOG("Push", "触发开机推送...");
     {
       String bootMsg = String("🚀 设备已启动") +
-        "\n🌐 设备地址: " + getDeviceUrl() +
+        "\n🌐 设备地址: " + WifiManager::deviceUrl() +
         "\n📶 MAC: " + WiFi.macAddress() +
-        "\n📦 固件版本: " + otaGetVersion();
+        "\n📦 固件版本: " + Ota::version();
       if (s_cachedHasCrash) {
         time_t ct = s_cachedCrashTime;
         if (ct > 0) {
@@ -192,34 +192,34 @@ void loop() {
         }
         bootMsg += "，请前往工具箱导出 coredump";
       }
-      sendPushNotification("设备", bootMsg, timeModuleGetDateStr(), MsgTypeInfo(MSG_TYPE_SIM));
+      Push::send("设备", bootMsg, TimeSync::dateStr(), MsgTypeInfo(MSG_TYPE_SIM));
     }
   }
 
-  checkConcatTimeout();
-  callTick();
-  simTick();
-  pushRetryTick();
-  timeModuleTick();
-  wifiManagerTick();
+  Sms::checkConcatTimeout();
+  Call::tick();
+  Sim::tick();
+  PushRetry::tick();
+  TimeSync::tick();
+  WifiManager::tick();
 
   // RTC 最后已知时间更新（每 10 秒，仅时间已同步时）
   {
     static unsigned long s_lastRtcUpdate = 0;
-    if (timeModuleIsTimeSynced() && millis() - s_lastRtcUpdate >= 10000) {
+    if (TimeSync::isSynced() && millis() - s_lastRtcUpdate >= 10000) {
       s_lastRtcUpdate = millis();
-      coredumpUpdateLastKnownTime(time(nullptr));
+      Coredump::updateLastKnownTime(time(nullptr));
     }
   }
 
   // SIM 就绪后抓取运营商/信号，并在 NTP 未同步时从 SIM NITZ 同步时间
-  if (!s_simInfoFetched && simGetState() == SIM_READY) {
+  if (!s_simInfoFetched && Sim::state() == SIM_READY) {
     s_simInfoFetched = true;
-    simFetchInfo();
-    if (!timeModuleIsTimeSynced()) {
-      timeModuleSyncFromSIM();
+    Sim::fetchInfo();
+    if (!TimeSync::isSynced()) {
+      TimeSync::syncFromSIM();
     }
   }
 
-  rebootTick();
+  ConfigStore::rebootTick();
 }

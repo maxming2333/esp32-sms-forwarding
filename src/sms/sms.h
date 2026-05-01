@@ -1,36 +1,49 @@
 #pragma once
 #include <Arduino.h>
 
-constexpr int MAX_CONCAT_PARTS    = 10;
-constexpr unsigned long CONCAT_TIMEOUT_MS = 300000;  // 5分钟
-constexpr int MAX_CONCAT_MESSAGES = 5;
+// 拼接短信参数
+constexpr int          MAX_CONCAT_PARTS    = 10;        // 单条拼接短信最多多少分片
+constexpr unsigned long CONCAT_TIMEOUT_MS  = 300000;    // 拼接超时（5 分钟），过期则丢弃未收齐的分片
+constexpr int          MAX_CONCAT_MESSAGES = 5;         // 同时进行中的拼接短信数量上限
 
+// 单个拼接分片
 struct SmsPart {
-  bool   valid;
-  String text;
+  bool   valid;    // 是否已收到
+  String text;     // 分片解码后的文本
 };
 
+// 一条拼接短信的状态
 struct ConcatSms {
-  bool         inUse;
-  int          refNumber;
-  String       sender;
-  String       timestamp;
-  int          totalParts;
-  int          receivedParts;
-  unsigned long firstPartTime;
-  SmsPart      parts[MAX_CONCAT_PARTS];
+  bool          inUse;             // 槽位是否在用
+  int           refNumber;         // UDH 中的 reference number（区分不同拼接短信）
+  String        sender;            // 发送方号码
+  String        timestamp;         // 第一片的 SCTS 时间戳
+  int           totalParts;        // UDH 中的分片总数
+  int           receivedParts;     // 已接收的分片数
+  unsigned long firstPartTime;     // 收到第一片的本地时间，用于超时判断
+  SmsPart       parts[MAX_CONCAT_PARTS];
 };
 
-void initConcatBuffer();
-void checkConcatTimeout();
-bool sendSMSPDU(const char* phoneNumber, const char* message);
+// SMS 业务层：负责短信收发、PDU 拼接、转发推送。
+// URC 入口由 Sim 类路由过来；底层 AT 调度走 SimDispatcher。
+class Sms {
+public:
+  // 初始化拼接缓冲区（清零所有 ConcatSms 槽位）
+  static void initConcatBuffer();
 
-// 启动专用 SMS 处理任务（在 simStartReaderTask() 之前调用一次）
-// 所有 PDU 重处理均在此任务中执行，不占用 sim_reader 栈
-void smsStartProcTask();
+  // 检查并丢弃超时未收齐的拼接短信（loop 周期调用）
+  static void checkConcatTimeout();
 
-// URC 路由入口（由 SIM reader task 的 URC 回调调用）
-// smsHandlePDU 仅将 PDU 字符串入队，立即返回，不在 sim_reader 栈上处理
-void smsHandleCMTHeader();                     ///< +CMT: 头部到达，切换到等待 PDU 状态
-void smsHandlePDU(const String& line);         ///< CMT 之后的 PDU 数据行处理（入队）
-void smsHandleUSSD(const String& line);        ///< +CUSD: USSD 消息上报处理
+  // 通过 PDU 模式发送短信；支持中文 / 长短信自动拆分。
+  // 返回 true 表示模组已接收（不代表对端送达）。
+  static bool sendPDU(const char* phoneNumber, const char* message);
+
+  // 启动 SMS 处理任务（独立 FreeRTOS 任务，避免 URC 回调链路过长阻塞 Reader Task）。
+  // 必须在 Sim::startReaderTask() 之前调用。
+  static void startProcTask();
+
+  // URC 路由入口（由 SIM Reader Task 上下文调用）
+  static void handleCMTHeader();              // +CMT: 短信头到达
+  static void handlePDU(const String& line);  // PDU 内容行
+  static void handleUSSD(const String& line); // +CUSD: USSD 应答
+};

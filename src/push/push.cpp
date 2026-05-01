@@ -2,7 +2,7 @@
 #include "push_channels.h"
 #include "push_retry.h"
 #include "msg_context.h"
-#include "time/time_module.h"
+#include "time/time_sync.h"
 #include "sim/sim.h"
 #include "sim/sim_dispatcher.h"
 #include "wifi/wifi_manager.h"
@@ -17,23 +17,23 @@ static bool _sendOneChannel(const PushChannel& ch, const MessageContext& ctx,
                              const String& timestamp, const String& renderedBody) {
   // 在通道副本中渲染 key1/key2（不修改原通道配置）
   PushChannel rendered = ch;
-  rendered.key1 = renderTemplate(ch.key1, ctx);
-  rendered.key2 = renderTemplate(ch.key2, ctx);
+  rendered.key1 = MsgContext::render(ch.key1, ctx);
+  rendered.key2 = MsgContext::render(ch.key2, ctx);
 
   bool ok = false;
   switch (rendered.type) {
-    case PUSH_TYPE_POST_JSON:   ok = sendPostJson(rendered, sender, message, timestamp, renderedBody);    break;
-    case PUSH_TYPE_BARK:        ok = sendBark(rendered, sender, message, timestamp, renderedBody);         break;
-    case PUSH_TYPE_GET:         ok = sendGet(rendered, sender, message, timestamp, renderedBody);          break;
-    case PUSH_TYPE_DINGTALK:    ok = sendDingtalk(rendered, sender, message, timestamp, renderedBody);     break;
-    case PUSH_TYPE_PUSHPLUS:    ok = sendPushPlus(rendered, sender, message, timestamp, renderedBody);     break;
-    case PUSH_TYPE_SERVERCHAN:  ok = sendServerChan(rendered, sender, message, timestamp, renderedBody);   break;
-    case PUSH_TYPE_CUSTOM:      ok = sendCustom(rendered, sender, message, timestamp, renderedBody);       break;
-    case PUSH_TYPE_FEISHU:      ok = sendFeishu(rendered, sender, message, timestamp, renderedBody);       break;
-    case PUSH_TYPE_GOTIFY:      ok = sendGotify(rendered, sender, message, timestamp, renderedBody);       break;
-    case PUSH_TYPE_TELEGRAM:    ok = sendTelegram(rendered, sender, message, timestamp, renderedBody);     break;
-    case PUSH_TYPE_WECHAT_WORK: ok = sendWechatWork(rendered, sender, message, timestamp, renderedBody);   break;
-    case PUSH_TYPE_SMS:         ok = sendSmsPush(rendered, sender, message, timestamp, renderedBody);      break;
+    case PUSH_TYPE_POST_JSON:   ok = PushChannels::sendPostJson(rendered, sender, message, timestamp, renderedBody);    break;
+    case PUSH_TYPE_BARK:        ok = PushChannels::sendBark(rendered, sender, message, timestamp, renderedBody);         break;
+    case PUSH_TYPE_GET:         ok = PushChannels::sendGet(rendered, sender, message, timestamp, renderedBody);          break;
+    case PUSH_TYPE_DINGTALK:    ok = PushChannels::sendDingtalk(rendered, sender, message, timestamp, renderedBody);     break;
+    case PUSH_TYPE_PUSHPLUS:    ok = PushChannels::sendPushPlus(rendered, sender, message, timestamp, renderedBody);     break;
+    case PUSH_TYPE_SERVERCHAN:  ok = PushChannels::sendServerChan(rendered, sender, message, timestamp, renderedBody);   break;
+    case PUSH_TYPE_CUSTOM:      ok = PushChannels::sendCustom(rendered, sender, message, timestamp, renderedBody);       break;
+    case PUSH_TYPE_FEISHU:      ok = PushChannels::sendFeishu(rendered, sender, message, timestamp, renderedBody);       break;
+    case PUSH_TYPE_GOTIFY:      ok = PushChannels::sendGotify(rendered, sender, message, timestamp, renderedBody);       break;
+    case PUSH_TYPE_TELEGRAM:    ok = PushChannels::sendTelegram(rendered, sender, message, timestamp, renderedBody);     break;
+    case PUSH_TYPE_WECHAT_WORK: ok = PushChannels::sendWechatWork(rendered, sender, message, timestamp, renderedBody);   break;
+    case PUSH_TYPE_SMS:         ok = PushChannels::sendSmsPush(rendered, sender, message, timestamp, renderedBody);      break;
     default:
       LOG("Push", "未知推送类型: %d", (int)rendered.type);
       break;
@@ -65,24 +65,24 @@ static MessageContext buildMsgContext(const String& sender, const String& messag
   ctx.from        = sender;
   ctx.message     = message;
   ctx.timestamp   = timestamp;
-  ctx.date        = timeModuleGetDateStr();
-  ctx.deviceId    = msgContextGetDeviceId();
-  ctx.carrier     = simGetCarrier();
-  ctx.to          = simGetPhoneNum();
+  ctx.date        = TimeSync::dateStr();
+  ctx.deviceId    = WifiManager::deviceId();
+  ctx.carrier     = Sim::carrier();
+  ctx.to          = Sim::phoneNum();
   ctx.simSlot     = "SIM1";
-  ctx.signal      = simGetSignal();
+  ctx.signal      = Sim::signal();
   ctx.remark      = config.remark;
-  ctx.uptime      = formatUptime(millis());
-  ctx.deviceName  = getDeviceName();
+  ctx.uptime      = MsgContext::formatUptime(millis());
+  ctx.deviceName  = WifiManager::deviceName();
   ctx.messageType = messageType;
   return ctx;
 }
 
 // 单通道推送：含跳过判断、构建消息上下文，供重试队列调用
-bool sendPushChannel(int channelIdx, const String& sender, const String& message, const String& timestamp, const MsgTypeInfo& msgType) {
+bool Push::sendChannel(int channelIdx, const String& sender, const String& message, const String& timestamp, const MsgTypeInfo& msgType) {
   if (channelIdx < 0 || channelIdx >= config.pushCount) return false;
   const PushChannel& ch = config.pushChannels[channelIdx];
-  if (!isPushChannelValid(ch)) return false;
+  if (!ConfigStore::isPushChannelValid(ch)) return false;
 
   bool wifiOk = (WiFi.status() == WL_CONNECTED);
   if (ch.type >= PUSH_TYPE_POST_JSON && ch.type <= PUSH_TYPE_WECHAT_WORK && !wifiOk) return false;
@@ -91,16 +91,16 @@ bool sendPushChannel(int channelIdx, const String& sender, const String& message
   MessageContext ctx = buildMsgContext(sender, message, timestamp, msgType.toString());
   ctx.channelName = ch.name;
   ctx.channelType    = pushTypeLabel(ch.type);
-  String renderedBody = ch.customBody.length() > 0 ? renderTemplate(ch.customBody, ctx) : "";
+  String renderedBody = ch.customBody.length() > 0 ? MsgContext::render(ch.customBody, ctx) : "";
   return _sendOneChannel(ch, ctx, sender, message, timestamp, renderedBody);
 }
 
-void sendPushNotification(const String& sender, const String& message, const String& timestamp, const MsgTypeInfo& msgType) {
+void Push::send(const String& sender, const String& message, const String& timestamp, const MsgTypeInfo& msgType) {
   // T015: 推送前检查本机号码是否就绪
   // 入队整条推送链，待号码就绪后重新完整执行，确保故障转移策略正确生效
-  if (!simIsNumberReady()) {
+  if (!Sim::isNumberReady()) {
     LOG("Push", "本机号码未知，完整推送链入队等待号码就绪");
-    pushRetryEnqueue(PUSH_RETRY_FULL_CHAIN, sender, message, timestamp, msgType, RetryReason::WAITING_NUMBER);
+    PushRetry::enqueue(PUSH_RETRY_FULL_CHAIN, sender, message, timestamp, msgType, RetryReason::WAITING_NUMBER);
     return;
   }
 
@@ -119,7 +119,7 @@ void sendPushNotification(const String& sender, const String& message, const Str
 
   for (int i = 0; i < config.pushCount; i++) {
     const PushChannel& ch = config.pushChannels[i];
-    if (!isPushChannelValid(ch)) continue;
+    if (!ConfigStore::isPushChannelValid(ch)) continue;
 
     // HTTP 类通道（type 1–11）在 WiFi 未连接时跳过
     if (ch.type >= PUSH_TYPE_POST_JSON && ch.type <= PUSH_TYPE_WECHAT_WORK && !wifiOk) {
@@ -139,7 +139,7 @@ void sendPushNotification(const String& sender, const String& message, const Str
     // 渲染自定义消息格式（非空时替换内置默认格式）
     ctx.channelName = ch.name;
     ctx.channelType    = pushTypeLabel(ch.type);
-    String renderedBody = ch.customBody.length() > 0 ? renderTemplate(ch.customBody, ctx) : "";
+    String renderedBody = ch.customBody.length() > 0 ? MsgContext::render(ch.customBody, ctx) : "";
 
     bool ok = _sendOneChannel(ch, ctx, sender, message, timestamp, renderedBody);
 
@@ -158,7 +158,7 @@ void sendPushNotification(const String& sender, const String& message, const Str
       // 广播模式：继续所有通道
       delay(100);
       if (!ok && ch.retryOnFail) {
-        pushRetryEnqueue(i, sender, message, timestamp, msgType);
+        PushRetry::enqueue(i, sender, message, timestamp, msgType);
         LOG("Push", "[Retry] 通道 %s 失败，已加入重试队列", name.c_str());
       }
     }
@@ -167,7 +167,7 @@ void sendPushNotification(const String& sender, const String& message, const Str
   // 故障转移模式：只有整链全部失败时才入队重试
   if (config.pushStrategy == PUSH_STRATEGY_FAILOVER && !failoverChainDone) {
     for (int j = 0; j < failoverRetryCount; j++) {
-      pushRetryEnqueue(failoverRetry[j], sender, message, timestamp, msgType);
+      PushRetry::enqueue(failoverRetry[j], sender, message, timestamp, msgType);
       const String& rname = config.pushChannels[failoverRetry[j]].name;
       LOG("Push", "[Retry] 故障转移链全部失败，通道 %s 加入重试队列", rname.c_str());
     }

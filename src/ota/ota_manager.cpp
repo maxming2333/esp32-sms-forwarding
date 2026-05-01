@@ -36,8 +36,8 @@ static void beginHttpClient(HTTPClient& http, WiFiClientSecure& tlsClient, const
     }
 }
 
-// ── otaGetVersion ────────────────────────────────────────
-String otaGetVersion() {
+// ── Ota::version ────────────────────────────────────────
+String Ota::version() {
     // 重建与 GitHub release tag 一致的完整版本号：
     //   APP_VERSION   = "v1-551f992"        (prefix-sha)
     //   release tag   = "v1-20260423T210356-551f992" (prefix-dateTimestamp-sha)
@@ -55,9 +55,9 @@ String otaGetVersion() {
     return ver;
 }
 
-// ── otaInit ──────────────────────────────────────────────────────
-void otaInit() {
-    g_currentVer = otaGetVersion();
+// ── Ota::init ──────────────────────────────────────────────────────
+void Ota::init() {
+    g_currentVer = Ota::version();
     g_state      = OtaState::IDLE;
     g_progress   = 0;
     g_message    = "";
@@ -66,8 +66,8 @@ void otaInit() {
     LOG("OTA", "初始化完成，版本: %s | 编译: %s %s", g_currentVer.c_str(), APP_BUILD_DATE, APP_BUILD_TIME);
 }
 
-// ── otaGetStatus ─────────────────────────────────────────────────
-OtaStatusPayload otaGetStatus() {
+// ── Ota::status ─────────────────────────────────────────────────
+OtaStatusPayload Ota::status() {
     OtaStatusPayload p;
     p.state          = g_state;
     p.progress       = g_progress;
@@ -375,8 +375,8 @@ static void onlineUpgradeTask(void* param) {
     vTaskDelete(nullptr);
 }
 
-// ── otaStartVersionCheck ──────────────────────────────────────────
-void otaStartVersionCheck() {
+// ── Ota::startVersionCheck ──────────────────────────────────────────
+void Ota::startVersionCheck() {
     if (g_inProgress) return;
     unsigned long now = millis();
     if (g_lastCheckMs != 0 && now - g_lastCheckMs < OTA_CHECK_DEBOUNCE_MS) return;
@@ -387,8 +387,8 @@ void otaStartVersionCheck() {
     xTaskCreate(checkVersionTask, "ota_check", OTA_TASK_STACK_SIZE, nullptr, OTA_TASK_PRIORITY, nullptr);
 }
 
-// ── otaStartOnlineUpgrade ─────────────────────────────────────────
-bool otaStartOnlineUpgrade(const String& targetTag) {
+// ── Ota::startOnlineUpgrade ─────────────────────────────────────────
+bool Ota::startOnlineUpgrade(const String& targetTag) {
     if (targetTag.isEmpty()) return false;
     if (g_inProgress) return false;
 
@@ -422,8 +422,8 @@ bool otaStartOnlineUpgrade(const String& targetTag) {
     return true;
 }
 
-// ── otaHandleUploadChunk ──────────────────────────────────────────
-bool otaHandleUploadChunk(uint8_t* data, size_t len, size_t index, bool final) {
+// ── Ota::handleUploadChunk ──────────────────────────────────────────
+bool Ota::handleUploadChunk(uint8_t* data, size_t len, size_t index, bool final) {
     esp_err_t err;
 
     if (index == 0) {
@@ -523,8 +523,8 @@ bool otaHandleUploadChunk(uint8_t* data, size_t len, size_t index, bool final) {
     return true;
 }
 
-// ── otaHandleLfsUploadChunk ───────────────────────────────────────
-bool otaHandleLfsUploadChunk(uint8_t* data, size_t len, size_t index, size_t totalSize, bool final) {
+// ── Ota::handleLfsUploadChunk ───────────────────────────────────────
+bool Ota::handleLfsUploadChunk(uint8_t* data, size_t len, size_t index, size_t totalSize, bool final) {
     if (index == 0) {
         // 第一块：初始化
         if (g_inProgress) return false;

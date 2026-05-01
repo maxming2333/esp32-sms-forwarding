@@ -88,17 +88,24 @@ struct RebootSchedule {
 extern Config config;
 extern RebootSchedule rebootSchedule;
 
-void loadConfig();
-void saveConfig();
-void resetConfig();
-void loadRebootSchedule(RebootSchedule& sched);
-void saveRebootSchedule(const RebootSchedule& sched);
-void rebootTick();
-bool isPushChannelValid(const PushChannel& ch);
-bool isConfigValid();
+// All config operations are static methods. Backing storage stays as global structs above
+// to keep call sites short (e.g. `config.adminPhone`).
+class ConfigStore {
+public:
+  static void load();
+  static void save();
+  static void reset();
+  static void loadReboot(RebootSchedule& sched);
+  static void saveReboot(const RebootSchedule& sched);
+  static void rebootTick();
+  static bool isPushChannelValid(const PushChannel& ch);
+  static bool isValid();
 
-// JSON 序列化 / 反序列化（供导出和导入控制器共用）
-// 新增或修改 Config / RebootSchedule 字段时只需更新这两个函数即可。
-void configToJson(JsonDocument& doc);
-void configFromJson(JsonDocument& doc);
-void insertWifiFirst(const String& ssid, const String& pass);
+  // JSON serialization shared by export/import controllers.
+  // Adding/modifying Config or RebootSchedule fields only needs updating these two methods.
+  static void toJson(JsonDocument& doc);
+  static void fromJson(JsonDocument& doc);
+
+  // Insert a WiFi at the head of wifiList (deduplicates), then save.
+  static void insertWifiFirst(const String& ssid, const String& pass);
+};

@@ -1,6 +1,7 @@
 #include "tools.h"
 #include "config/config.h"
 #include "http/body_accumulator.h"
+#include "http/json_response.h"
 #include "logger.h"
 #include "coredump/coredump.h"
 #include "sms/sms.h"
@@ -20,17 +21,19 @@ static String g_resetToken = "";
 // sendATCommand: 通过 SimCommandDispatcher 串行发送 AT 指令并返回响应字符串
 static String sendATCommand(const char* cmd, unsigned long timeoutMs) {
   String resp;
-  simSendCommand(cmd, static_cast<uint32_t>(timeoutMs), &resp, false);
+  SimDispatcher::sendCommand(cmd, static_cast<uint32_t>(timeoutMs), &resp, false);
   return resp;
 }
 
 static void sendJsonResponse(AsyncWebServerRequest* request, bool success, const String& message) {
-  AsyncJsonResponse* resp = new AsyncJsonResponse();
-  JsonObject root = resp->getRoot();
-  root["success"] = success;
-  root["message"] = message;
-  resp->setLength();
-  request->send(resp);
+  // 统一返回结构 {ok, message|error}：
+  //   - 成功时 message 可能携带 HTML 片段（查询表格等），前端以 d.message 读取
+  //   - 失败时 error 携带错误描述
+  if (success) {
+    JsonResp::ok(request, message);
+  } else {
+    JsonResp::err(request, 200, message);  // 200 保持与原本一致，业务失败不作 HTTP 错误
+  }
 }
 
 // ---------- handlers ----------
@@ -45,7 +48,7 @@ void sendSmsController(AsyncWebServerRequest* request) {
 
   LOG("HTTP", "网页端发送短信请求，目标: %s", phone.c_str());
 
-  bool success = sendSMSPDU(phone.c_str(), content.c_str());
+  bool success = Sms::sendPDU(phone.c_str(), content.c_str());
 
   sendJsonResponse(request, success, success ? "短信发送成功！" : "短信发送失败，请检查模组状态");
 }
@@ -57,7 +60,7 @@ void pingController(AsyncWebServerRequest* request) {
   delay(500);
 
   // AT+MPING 为异步多行响应，通过 Serial1 直接收取（reader task 此时已阻塞在调用方等待）
-  if (!simPauseReader()) {
+  if (!SimDispatcher::pauseReader()) {
     sendATCommand("AT+CGACT=0,1", 5000);
     sendJsonResponse(request, false, "SIM 串口忙，请稍后重试");
     return;
@@ -125,7 +128,7 @@ void pingController(AsyncWebServerRequest* request) {
     delay(10);
   }
 
-  simResumeReader();
+  SimDispatcher::resumeReader();
 
   sendATCommand("AT+CGACT=0,1", 5000);
 
@@ -248,7 +251,7 @@ void queryController(AsyncWebServerRequest* request) {
     else if (rssi >= -90) rssiStr += " (信号较弱)";
     else rssiStr += " (信号很差)";
     message += "<tr><td>信号强度</td><td>" + rssiStr + "</td></tr>";
-    message += "<tr><td>IP地址</td><td>" + wifiManagerGetIP() + "</td></tr>";
+    message += "<tr><td>IP地址</td><td>" + WifiManager::ip() + "</td></tr>";
     message += "<tr><td>网关</td><td>" + WiFi.gatewayIP().toString() + "</td></tr>";
     message += "<tr><td>子网掩码</td><td>" + WiFi.subnetMask().toString() + "</td></tr>";
     message += "<tr><td>DNS服务器</td><td>" + WiFi.dnsIP().toString() + "</td></tr>";
@@ -347,28 +350,21 @@ void resetConfigController(AsyncWebServerRequest* request, uint8_t* data,
       || !doc.is<JsonObject>();
   if (parseFailed) {
     httpReleaseAccumulatedBody(request);
-    request->send(400, "application/json",
-      "{\"ok\":false,\"error\":\"请求格式错误\"}");
+    JsonResp::err(request, 400, "请求格式错误");
     return;
   }
   httpReleaseAccumulatedBody(request);
 
   const char* token = doc["token"] | "";
   if (g_resetToken.length() == 0 || strcmp(token, g_resetToken.c_str()) != 0) {
-    request->send(403, "application/json",
-      "{\"ok\":false,\"error\":\"token无效或已过期，请重新获取\"}");
+    JsonResp::err(request, 403, "token无效或已过期，请重新获取");
     return;
   }
 
   g_resetToken = "";
-  resetConfig();
+  ConfigStore::reset();
 
-  request->send(200, "application/json", "{\"ok\":true,\"message\":\"配置已重置，设备将在2秒后自动重启\"}");
-  xTaskCreate([](void*) {
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    ESP.restart();
-    vTaskDelete(nullptr);
-  }, "restart", 2048, nullptr, 1, nullptr);
+  JsonResp::okWithReboot(request, "配置已重置，设备将在2秒后自动重启");
 }
 
 // ── 重启设备端点 ─────────────────────────────────────────────
@@ -382,44 +378,35 @@ void rebootController(AsyncWebServerRequest* request, uint8_t* data,
   if (deserializeJson(doc, body) != DeserializationError::Ok
       || !doc.is<JsonObject>()) {
     httpReleaseAccumulatedBody(request);
-    request->send(400, "application/json",
-      "{\"ok\":false,\"error\":\"请求格式错误\"}");
+    JsonResp::err(request, 400, "请求格式错误");
     return;
   }
   httpReleaseAccumulatedBody(request);
 
   const char* token = doc["token"] | "";
   if (g_resetToken.length() == 0 || strcmp(token, g_resetToken.c_str()) != 0) {
-    request->send(403, "application/json",
-      "{\"ok\":false,\"error\":\"token无效或已过期，请重新获取\"}");
+    JsonResp::err(request, 403, "token无效或已过期，请重新获取");
     return;
   }
 
   g_resetToken = "";
   LOG("HTTP", "网页端触发设备重启");
 
-  request->send(200, "application/json", "{\"ok\":true,\"message\":\"设备将在2秒后重启\"}");
-  xTaskCreate([](void*) {
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    ESP.restart();
-    vTaskDelete(nullptr);
-  }, "reboot", 2048, nullptr, 1, nullptr);
+  JsonResp::okWithReboot(request, "设备将在2秒后重启");
 }
 
 void exportCoreDumpController(AsyncWebServerRequest* request) {
-  const esp_partition_t* part = coredumpGetPartition();
+  const esp_partition_t* part = Coredump::partition();
 
   if (part == nullptr) {
-    request->send(404, "application/json",
-      "{\"ok\":false,\"error\":\"未找到 coredump 分区\"}");
+    JsonResp::err(request, 404, "未找到 coredump 分区");
     return;
   }
 
-  size_t usedSize = coredumpGetUsedSize(part);
+  size_t usedSize = Coredump::usedSize(part);
 
   if (usedSize == 0) {
-    request->send(404, "application/json",
-      "{\"ok\":false,\"error\":\"未发现可导出的 coredump（分区为空）\"}");
+    JsonResp::err(request, 404, "未发现可导出的 coredump（分区为空）");
     return;
   }
 
@@ -440,15 +427,15 @@ void exportCoreDumpController(AsyncWebServerRequest* request) {
   );
 
   String cdFilename;
-  time_t crashTime = coredumpGetCrashTime();
+  time_t crashTime = Coredump::crashTime();
   if (crashTime > 0) {
     char timeBuf[20];
     struct tm tmInfo;
     gmtime_r(&crashTime, &tmInfo);
     strftime(timeBuf, sizeof(timeBuf), "%Y%m%dT%H%M%S", &tmInfo);
-    cdFilename = getDeviceName() + "-coredump-" + timeBuf + ".bin";
+    cdFilename = WifiManager::deviceName() + "-coredump-" + timeBuf + ".bin";
   } else {
-    cdFilename = getDeviceName() + "-coredump-unknown.bin";
+    cdFilename = WifiManager::deviceName() + "-coredump-unknown.bin";
   }
   resp->addHeader("Content-Disposition", "attachment; filename=" + cdFilename);
   resp->addHeader("Cache-Control", "no-store");
@@ -457,22 +444,22 @@ void exportCoreDumpController(AsyncWebServerRequest* request) {
 }
 
 void coredumpInfoController(AsyncWebServerRequest* request) {
-  const esp_partition_t* part = coredumpGetPartition();
+  const esp_partition_t* part = Coredump::partition();
   if (!part) {
     request->send(200, "application/json", "{\"hasCoredump\":false}");
     return;
   }
 
-  size_t usedSize = coredumpGetUsedSize(part);
+  size_t usedSize = Coredump::usedSize(part);
 
   AsyncJsonResponse* resp = new AsyncJsonResponse();
   JsonObject root = resp->getRoot();
   root["hasCoredump"] = (usedSize > 0);
   if (usedSize > 0) {
     root["size"]         = (unsigned int)usedSize;
-    root["crashTime"]    = (long long)coredumpGetCrashTime();
-    root["crashVersion"] = coredumpGetCrashVersion();
-    String elfUrl = coredumpGetElfUrl();
+    root["crashTime"]    = (long long)Coredump::crashTime();
+    root["crashVersion"] = Coredump::crashVersion();
+    String elfUrl = Coredump::elfUrl();
     if (elfUrl.length() > 0) root["elfUrl"] = elfUrl;
   }
   resp->setLength();

@@ -1,5 +1,5 @@
 #include "wifi_manager.h"
-#include "ble/blufi_handler.h"
+#include "ble/blufi.h"
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 #include <esp_wifi.h>
@@ -87,7 +87,7 @@ static int buildSortedWifiOrder(int* outOrder, int count) {
 }
 
 static void setupSTAMode() {
-  WiFi.setHostname(getDeviceName().c_str());
+  WiFi.setHostname(WifiManager::deviceName().c_str());
   WiFi.mode(WIFI_STA);
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
 }
@@ -101,10 +101,10 @@ static void enterAPMode() {
   s_reconnState    = RECONNECT_IDLE;       // 清除可能残留的扫描等待状态
   s_apRescanNextMs = millis() + WIFI_AP_RESCAN_INTERVAL_MS;  // 30s 后首次后台扫描
   LOG("WiFi", "AP模式启动，SSID: %s，IP: 192.168.4.1", kApSsid);
-  blufiInit();
+  Blufi::init();
 }
 
-void wifiManagerInit() {
+void WifiManager::init() {
   // 重置重连状态机（支持重复调用）
   s_reconnState    = RECONNECT_IDLE;
   s_reconnWIdx     = 0;
@@ -176,7 +176,7 @@ void wifiManagerInit() {
   enterAPMode();
 }
 
-void wifiManagerTick() {
+void WifiManager::tick() {
   if (s_mode == WIFI_MODE_AP_ACTIVE) {
     if (config.wifiCount == 0) return;  // 无配置，无需扫描
 
@@ -294,43 +294,46 @@ void wifiManagerTick() {
   }
 }
 
-WiFiMode wifiManagerGetMode() {
+WiFiMode WifiManager::mode() {
   return s_mode;
 }
 
-bool wifiManagerIsInitDone() {
+bool WifiManager::isInitDone() {
   return s_initDone;
 }
 
-String wifiManagerGetIP() {
+String WifiManager::ip() {
   if (s_mode == WIFI_MODE_STA_CONNECTED) {
     return WiFi.localIP().toString();
   }
   return IPAddress(192, 168, 4, 1).toString();
 }
 
-String getDeviceUrl() {
-  return "http://" + wifiManagerGetIP() + "/";
+String WifiManager::deviceUrl() {
+  return "http://" + ip() + "/";
 }
 
-String getDeviceId() {
+String WifiManager::deviceId() {
   static String s_id = "";
-  if (s_id.length() > 0) return s_id;
+  if (s_id.length() > 0) {
+    return s_id;
+  }
   uint64_t mac = ESP.getEfuseMac();
-  // 取 MAC 后三字节（byte3:byte4:byte5），保持与 MAC 地址显示顺序一致
   uint32_t last3 = (uint32_t)(((mac >> 24) & 0xFF) << 16 |
-                               ((mac >> 32) & 0xFF) << 8  |
-                               ((mac >> 40) & 0xFF));
+                              ((mac >> 32) & 0xFF) << 8  |
+                              ((mac >> 40) & 0xFF));
   s_id = String(last3, HEX);
   s_id.toUpperCase();
-  while (s_id.length() < 6) s_id = "0" + s_id;
+  while (s_id.length() < 6) {
+    s_id = "0" + s_id;
+  }
   return s_id;
 }
 
-String getDeviceName() {
-  return String(APP_NAME "-") + getDeviceId();
+String WifiManager::deviceName() {
+  return String(APP_NAME "-") + deviceId();
 }
 
-void wifiManagerSetReconnectCallback(WifiReconnectCallback cb) {
+void WifiManager::setReconnectCallback(WifiReconnectCallback cb) {
   s_reconnectCb = cb;
 }

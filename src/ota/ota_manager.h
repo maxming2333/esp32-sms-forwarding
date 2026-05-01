@@ -1,65 +1,58 @@
 #pragma once
 #include <Arduino.h>
 
-// OTA 升级状态枚举
+// OTA 状态机
 enum class OtaState : uint8_t {
-    IDLE        = 0,  // 空闲，无升级任务
-    CHECKING    = 1,  // 正在向 GitHub 查询最新版本
-    DOWNLOADING = 2,  // 正在下载固件（在线升级）
-    WRITING     = 3,  // 正在写入 Flash（手动上传，逐块写入中）
-    SUCCESS     = 4,  // 升级写入完成，设备将在 2s 后自动重启
-    FAILED      = 5,  // 升级失败（写入错误、空间不足、传输中断）
-    FLASHING_FS = 6,  // 正在写入 LittleFS 分区（在线升级第二阶段 / 手动上传 FS）
+  IDLE        = 0,    // 空闲
+  CHECKING    = 1,    // 正在查询 GitHub Release 最新版本
+  DOWNLOADING = 2,    // 正在下载固件
+  WRITING     = 3,    // 正在写入 OTA 分区
+  SUCCESS     = 4,    // 成功（等待重启）
+  FAILED      = 5,    // 失败（message 携带原因）
+  FLASHING_FS = 6,    // 正在烧录 LittleFS（替换 HTML 资源）
 };
 
-// OTA 状态快照（仅用于 HTTP 响应序列化，不持久化）
+// 给前端的状态快照（JSON 序列化后通过 /api/ota/status 返回）
 struct OtaStatusPayload {
-    OtaState state          = OtaState::IDLE;
-    uint8_t  progress       = 0;      // 0–100 百分比
-    String   message        = "";     // 人类可读状态/错误信息
-    String   currentVersion = "";     // 当前运行固件版本
-    String   latestVersion  = "";     // 版本检查后的最新版本号（检查前为空串）
+  OtaState state          = OtaState::IDLE;
+  uint8_t  progress       = 0;     // 0~100
+  String   message        = "";    // 失败原因或当前阶段说明
+  String   currentVersion = "";    // 当前固件版本
+  String   latestVersion  = "";    // 远端最新版本（仅 CHECKING 完成后）
 };
 
-// 在线升级地址常量（修改此处即可变更升级源；latest 版本检查地址为此值 + "/latest"）
+// GitHub Release 基础 URL（拼接 tag 得到具体下载地址）
 static const char* const OTA_RELEASES_BASE_URL = "https://github.com/maxming2333/esp32-sms-forwarding/releases";
+// OTA 后台任务栈/优先级：
+//   - 12 KiB 栈：HTTPS 下载 + mbedTLS 握手栈占用较高，实测低于此值会爆栈
+//   - 优先级 1：低于 SIM Reader（3），高于 idle，避免抢占短信处理
+static constexpr uint32_t    OTA_TASK_STACK_SIZE  = 12288;
+static constexpr UBaseType_t OTA_TASK_PRIORITY    = 1;
+static constexpr int         OTA_HTTP_TIMEOUT_MS  = 15000;
 
-// FreeRTOS 任务栈大小（字节）
-// HTTPS 下载 + OTA 写入涉及 TLS 握手及较深的调用栈，适当增大以防溢出
-static constexpr uint32_t OTA_TASK_STACK_SIZE = 12288;
+// Ota：固件 OTA + LittleFS 烧录入口。所有耗时操作都在独立 FreeRTOS 任务执行，
+// 不阻塞 HTTP 请求。注意：本类内部使用**栈上**的 WiFiClientSecure，与 Push 共享禁用。
+class Ota {
+public:
+  // 当前运行中固件版本（由 esp_app_desc 提供，CI 注入）
+  static String           version();
 
-// FreeRTOS 任务优先级
-static constexpr UBaseType_t OTA_TASK_PRIORITY = 1;
+  // 初始化（注册回调、清理上次状态等）
+  static void             init();
 
-// HTTPS 请求超时（ms）
-static constexpr int OTA_HTTP_TIMEOUT_MS = 15000;
+  // 当前 OTA 状态快照（线程安全）
+  static OtaStatusPayload status();
 
-// 构建与 GitHub release tag 一致的完整版本号字符串
-// 格式：<prefix>-<YYYYMMDD>T<HHmmss>-<sha>，例如 v1-20260423T210356-551f992
-String otaGetVersion();
+  // 异步：启动版本检查（去 GitHub Release 查询最新 tag）
+  static void             startVersionCheck();
 
-// 初始化：读取当前固件版本，重置所有 OTA 状态
-void otaInit();
+  // 异步：启动 OTA 升级到指定 tag（如 "v1.2.3"）。返回 false 表示已在进行或参数无效。
+  static bool             startOnlineUpgrade(const String& targetTag);
 
-// 获取当前 OTA 状态快照（供 HTTP 控制器使用）
-OtaStatusPayload otaGetStatus();
+  // 处理本地上传的固件分片（HTTP /api/ota/upload）
+  static bool             handleUploadChunk(uint8_t* data, size_t len, size_t index, bool final_);
 
-// 启动后台版本检查任务（非阻塞，仅查询最新版本号，不下载固件）
-// 完成后状态回到 IDLE，g_latestVer 被填充
-void otaStartVersionCheck();
-
-// 启动后台在线升级任务（非阻塞，直接下载并刷写固件）
-// targetTag: 要升级到的版本 tag（由前端从 /api/ota/status 取得后传入，不可为空）
-// 返回 false 表示当前已有升级在进行中或 tag 为空
-bool otaStartOnlineUpgrade(const String& targetTag);
-
-// 手动上传：处理单个数据块（由 ESPAsyncWebServer upload 回调逐块调用）
-// index=0 表示第一块（需调用 esp_ota_begin）；final=true 表示最后一块
-// 返回 false 表示写入失败
-bool otaHandleUploadChunk(uint8_t* data, size_t len, size_t index, bool final);
-
-// 手动上传 LittleFS：处理单个数据块（由 ESPAsyncWebServer upload 回调逐块调用）
-// index=0 表示第一块（先卸载 LittleFS、擦除分区）；final=true 表示最后一块
-// totalSize: Content-Length（0 表示未知）
-// 返回 false 表示写入失败
-bool otaHandleLfsUploadChunk(uint8_t* data, size_t len, size_t index, size_t totalSize, bool final);
+  // 处理本地上传的 LittleFS 镜像分片（HTTP /api/ota/lfs）
+  static bool             handleLfsUploadChunk(uint8_t* data, size_t len, size_t index,
+                                               size_t totalSize, bool final_);
+};

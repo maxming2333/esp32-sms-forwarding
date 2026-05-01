@@ -1,4 +1,4 @@
-#include "blufi_handler.h"
+#include "blufi.h"
 #include "blufi_security.h"
 #include "config/config.h"
 #include "wifi/wifi_manager.h"
@@ -123,7 +123,7 @@ static void blufiEventCallback(esp_blufi_cb_event_t event, esp_blufi_cb_param_t*
         xTaskCreate([](void*) {
             taskYIELD();  // 让 BTC 任务先跑完
             vTaskDelay(pdMS_TO_TICKS(500));
-            blufiDeinit();
+            Blufi::deinit();
             vTaskDelay(pdMS_TO_TICKS(500));
             ESP.restart();
         }, "blufi_rst", 4096, nullptr, 5, nullptr);
@@ -165,7 +165,7 @@ static void blufiEventCallback(esp_blufi_cb_event_t event, esp_blufi_cb_param_t*
       // App 发送 SSID + PASSWORD 后，会明确发出此命令说明希望设备去连 WiFi。
       // 此时发 conn_report，App 收到后会主动断开 BLE，在 BLE_DISCONNECT 里再重启。
       if (s_pendingSsid.length() > 0) {
-        insertWifiFirst(s_pendingSsid, s_pendingPass);
+        ConfigStore::insertWifiFirst(s_pendingSsid, s_pendingPass);
         s_provisioningDone = true;
         esp_blufi_extra_info_t info{};
         // 填入目标 SSID 供 App 展示；BSSID 尚未连接无法填写，保持 bssid_set=false
@@ -186,7 +186,7 @@ static void blufiEventCallback(esp_blufi_cb_event_t event, esp_blufi_cb_param_t*
 
 // ---------- 公开接口 ----------
 
-void blufiInit() {
+void Blufi::init() {
   if (s_blufiInitialized) {
     return;
   }
@@ -218,7 +218,7 @@ void blufiInit() {
   // 不在此处调用 esp_ble_gap_set_device_name()：
   // esp_blufi_profile_init() 内部会将名称重置为 "BLUFI_DEVICE"，在此设置无效。
   // 广播包中的名称通过 startBlufiAdvertising() 直接写字节，GATT 名称在 INIT_FINISH 里设置。
-  s_deviceName = getDeviceName();
+  s_deviceName = WifiManager::deviceName();
 
   // 注册 GAP 回调包装器（gapEventHandler）：
   // 转发所有事件给 esp_blufi_gap_event_handler，
@@ -259,7 +259,7 @@ void blufiInit() {
   LOG("BluFi", "BluFi 已启动，设备名: %s", s_deviceName.c_str());
 }
 
-void blufiDeinit() {
+void Blufi::deinit() {
   if (!s_blufiInitialized) {
     return;
   }

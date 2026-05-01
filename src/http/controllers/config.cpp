@@ -1,6 +1,7 @@
 #include "config.h"
 #include "config/config.h"
 #include "http/body_accumulator.h"
+#include "http/json_response.h"
 #include "logger.h"
 #include <AsyncJson.h>
 #include <ArduinoJson.h>
@@ -54,10 +55,10 @@ void configController(AsyncWebServerRequest* request) {
 
 // ── configExportController ────────────────────────────────────
 // 将 Config struct 直接序列化为嵌套 JSON，触发浏览器文件下载。
-// 字段映射统一由 configToJson()（config.cpp）维护，新增字段无需改此处。
+// 字段映射统一由 ConfigStore::toJson()（config.cpp）维护，新增字段无需改此处。
 void configExportController(AsyncWebServerRequest* request) {
   JsonDocument doc;
-  configToJson(doc);
+  ConfigStore::toJson(doc);
 
   String body;
   serializeJsonPretty(doc, body);
@@ -83,7 +84,7 @@ void configExportController(AsyncWebServerRequest* request) {
 }
 
 // ── configImportController ────────────────────────────────────
-// 将 JSON 映射到 Config struct，再通过 saveConfig() 统一写入 NVS。
+// 将 JSON 映射到 Config struct，再通过 ConfigStore::save() 统一写入 NVS。
 // 同时兼容旧 namespace-grouped 格式（sms_config/reboot_cfg 顶层键）。
 void configImportController(AsyncWebServerRequest* request, uint8_t* data,
                             size_t len, size_t index, size_t total) {
@@ -94,14 +95,14 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
   JsonDocument doc;
   if (deserializeJson(doc, importBuf) != DeserializationError::Ok || !doc.is<JsonObject>()) {
     httpReleaseAccumulatedBody(request);
-    request->send(400, "application/json", "{\"ok\":false,\"error\":\"JSON解析失败，请确认文件格式正确\"}");
+    JsonResp::err(request, 400, "JSON解析失败，请确认文件格式正确");
     return;
   }
   httpReleaseAccumulatedBody(request);
 
   // 旧 namespace-grouped 格式识别
   if (doc["sms_config"].is<JsonObject>() || doc["reboot_cfg"].is<JsonObject>()) {
-    // 旧格式：按原 NVS 路径通过 saveConfig/saveRebootSchedule 完成写入
+    // 旧格式：按原 NVS 路径通过 ConfigStore::save/ConfigStore::saveReboot 完成写入
     // 此分支仅做基本映射以保持向后兼容，不引入新废弃键
     if (doc["sms_config"].is<JsonObject>()) {
       JsonObject s = doc["sms_config"].as<JsonObject>();
@@ -145,14 +146,9 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
       rebootSchedule.minute    = r["rb_minute"]    | rebootSchedule.minute;
       rebootSchedule.intervalH = r["rb_interval"]  | rebootSchedule.intervalH;
     }
-    saveConfig();
-    saveRebootSchedule(rebootSchedule);
-    request->send(200, "application/json", "{\"ok\":true,\"message\":\"配置导入成功，设备将在2秒后自动重启\"}");
-    xTaskCreate([](void*) {
-      vTaskDelay(pdMS_TO_TICKS(2000));
-      ESP.restart();
-      vTaskDelete(nullptr);
-    }, "restart", 2048, nullptr, 1, nullptr);
+    ConfigStore::save();
+    ConfigStore::saveReboot(rebootSchedule);
+    JsonResp::okWithReboot(request, "配置导入成功，设备将在2秒后自动重启");
     return;
   }
 
@@ -164,11 +160,11 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
                     || doc["blacklist"].is<JsonArray>()
                     || doc["reboot"].is<JsonObject>();
   if (!hasRecognized) {
-    request->send(400, "application/json", "{\"ok\":false,\"error\":\"配置格式不兼容，未找到可识别的配置节\"}");
+    JsonResp::err(request, 400, "配置格式不兼容，未找到可识别的配置节");
     return;
   }
 
-  // 向后兼容：旧 wifi 单对象 → wifiList（转换后交给 configFromJson 统一处理）
+  // 向后兼容：旧 wifi 单对象 → wifiList（转换后交给 ConfigStore::fromJson 统一处理）
   if (!doc["wifiList"].is<JsonArray>() && doc["wifi"].is<JsonObject>()) {
     JsonObject w = doc["wifi"].as<JsonObject>();
     String ssid  = w["ssid"] | String("");
@@ -180,26 +176,21 @@ void configImportController(AsyncWebServerRequest* request, uint8_t* data,
     }
   }
 
-  // 数组长度校验（超出限制立即返回 4xx，不调用 configFromJson）
+  // 数组长度校验（超出限制立即返回 4xx，不调用 ConfigStore::fromJson）
   if (doc["wifiList"].is<JsonArray>() && (int)doc["wifiList"].as<JsonArray>().size() > MAX_WIFI_ENTRIES) {
-    request->send(400, "application/json", "{\"ok\":false,\"error\":\"wifiList 超过最大限制（5条）\"}");
+    JsonResp::err(request, 400, "wifiList 超过最大限制（5条）");
     return;
   }
   if (doc["pushChannels"].is<JsonArray>() && (int)doc["pushChannels"].as<JsonArray>().size() > MAX_PUSH_CHANNELS) {
-    request->send(400, "application/json", "{\"ok\":false,\"error\":\"pushChannels 超过最大限制（10条）\"}");
+    JsonResp::err(request, 400, "pushChannels 超过最大限制（10条）");
     return;
   }
 
-  // 字段映射统一由 configFromJson()（config.cpp）维护，新增字段无需改此处
-  configFromJson(doc);
-  saveConfig();
-  saveRebootSchedule(rebootSchedule);
+  // 字段映射统一由 ConfigStore::fromJson()（config.cpp）维护，新增字段无需改此处
+  ConfigStore::fromJson(doc);
+  ConfigStore::save();
+  ConfigStore::saveReboot(rebootSchedule);
 
-  request->send(200, "application/json", "{\"ok\":true,\"message\":\"配置导入成功，设备将在2秒后自动重启\"}");
-  xTaskCreate([](void*) {
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    ESP.restart();
-    vTaskDelete(nullptr);
-  }, "restart", 2048, nullptr, 1, nullptr);
+  JsonResp::okWithReboot(request, "配置导入成功，设备将在2秒后自动重启");
 }
 

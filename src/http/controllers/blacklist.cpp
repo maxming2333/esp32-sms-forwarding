@@ -1,6 +1,7 @@
 #include "blacklist.h"
 #include "config/config.h"
 #include "http/body_accumulator.h"
+#include "http/json_response.h"
 #include "logger.h"
 #include <ArduinoJson.h>
 
@@ -26,14 +27,13 @@ void blacklistPostController(AsyncWebServerRequest* request, uint8_t* data, size
   DeserializationError err = deserializeJson(doc, requestBody);
   httpReleaseAccumulatedBody(request);
   if (err || !doc["numbers"].is<JsonArray>()) {
-    request->send(400, "application/json", "{\"ok\":false,\"error\":\"请求格式错误\"}");
+    JsonResp::err(request, 400, "请求格式错误");
     return;
   }
 
   JsonArray arr = doc["numbers"].as<JsonArray>();
   if ((int)arr.size() > MAX_BLACKLIST_ENTRIES) {
-    request->send(400, "application/json",
-      "{\"ok\":false,\"error\":\"黑名单最多支持20个号码\"}");
+    JsonResp::err(request, 400, "黑名单最多支持20个号码");
     return;
   }
 
@@ -41,13 +41,11 @@ void blacklistPostController(AsyncWebServerRequest* request, uint8_t* data, size
   for (JsonVariant v : arr) {
     config.blacklist[config.blacklistCount++] = v.as<String>();
   }
-  saveConfig();
+  ConfigStore::save();
   LOG("HTTP", "黑名单已更新，共 %d 条", config.blacklistCount);
 
-  JsonDocument resp;
-  resp["ok"]    = true;
-  resp["count"] = config.blacklistCount;
-  String body;
-  serializeJson(resp, body);
-  request->send(200, "application/json", body);
+  JsonResp::build(request, [](JsonObject root) {
+    root["ok"]    = true;
+    root["count"] = config.blacklistCount;
+  });
 }

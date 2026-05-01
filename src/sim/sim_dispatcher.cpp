@@ -2,33 +2,35 @@
 #include <Arduino.h>
 #include "logger.h"
 
-// ---------- 模块内部静态全局变量 ----------
+// ---------- 文件级私有状态与辅助函数（匿名命名空间） ----------
 
-static QueueHandle_t   s_queue       = nullptr;
-static TaskHandle_t    s_task        = nullptr;
-static SemaphoreHandle_t s_directTxnMutex = nullptr;
-static SimUrcCallback  s_urcCb       = nullptr;
-static SimCmdSlot*     s_activeCmd   = nullptr;
-static unsigned long   s_cmdStartMs  = 0;
-static volatile bool   s_pauseRequested = false;
-static volatile bool   s_readerPaused   = false;
-static bool            s_drainAfterTimeout = false;
-static unsigned long   s_lastRxMs          = 0;
+namespace {
+
+QueueHandle_t     s_queue             = nullptr;
+TaskHandle_t      s_task              = nullptr;
+SemaphoreHandle_t s_directTxnMutex    = nullptr;
+SimUrcCallback    s_urcCb             = nullptr;
+SimCmdSlot*       s_activeCmd         = nullptr;
+unsigned long     s_cmdStartMs        = 0;
+volatile bool     s_pauseRequested    = false;
+volatile bool     s_readerPaused      = false;
+bool              s_drainAfterTimeout = false;
+unsigned long     s_lastRxMs          = 0;
 
 // CMT PDU 行检测状态（是否等待 PDU 数据行）
-static bool            s_waitingPdu  = false;
+bool              s_waitingPdu        = false;
 
-static constexpr size_t SIM_RESP_BUF_SIZE = 256;
-static constexpr size_t SIM_LINE_BUF_MAX  = 512;
-static constexpr unsigned long SIM_TIMEOUT_DRAIN_QUIET_MS = 300;
+constexpr size_t        SIM_RESP_BUF_SIZE          = 256;
+constexpr size_t        SIM_LINE_BUF_MAX           = 512;
+constexpr unsigned long SIM_TIMEOUT_DRAIN_QUIET_MS = 300;
 
-static bool isFinalOkLine(const String& line) {
+bool isFinalOkLine(const String& line) {
     String s = line;
     s.trim();
     return s.equals("OK");
 }
 
-static bool isFinalErrorLine(const String& line) {
+bool isFinalErrorLine(const String& line) {
     String s = line;
     s.trim();
     return s.equals("ERROR") || s.startsWith("+CME ERROR") || s.startsWith("+CMS ERROR");
@@ -36,7 +38,7 @@ static bool isFinalErrorLine(const String& line) {
 
 // ---------- 内部 URC 识别 ----------
 
-static bool isUrcLine(const String& line) {
+bool isUrcLine(const String& line) {
     if (line.equals("RING"))                   return true;
     if (line.startsWith("+CLIP:"))             return true;
     if (line.startsWith("+CMT:"))              return true;
@@ -49,7 +51,7 @@ static bool isUrcLine(const String& line) {
 
 // ---------- 内部 URC 路由 ----------
 
-static void routeURC(const String& line) {
+void routeURC(const String& line) {
     if (s_urcCb == nullptr) return;
 
     if (line.equals("RING")) {
@@ -84,7 +86,7 @@ static void routeURC(const String& line) {
     }
 }
 
-static void appendResponseLine(SimCmdSlot* slot, const String& line) {
+void appendResponseLine(SimCmdSlot* slot, const String& line) {
     size_t existing = strnlen(slot->respBuf, SIM_RESP_BUF_SIZE);
     if (existing >= SIM_RESP_BUF_SIZE - 1) return;
 
@@ -105,7 +107,7 @@ static void appendResponseLine(SimCmdSlot* slot, const String& line) {
 
 // ---------- SIM reader task ----------
 
-static void simReaderTask(void*) {
+void simReaderTask(void*) {
     String lineBuf;
     lineBuf.reserve(400);  // 预分配，SMS PDU hex 串典型长度约 340 字符
 
@@ -191,21 +193,23 @@ static void simReaderTask(void*) {
     }
 }
 
+}  // namespace
+
 // ---------- 公共 API 实现 ----------
 
-void simRegisterUrcCallback(SimUrcCallback cb) {
+void SimDispatcher::registerUrcCallback(SimUrcCallback cb) {
     s_urcCb = cb;
 }
 
-void simDispatcherStart() {
+void SimDispatcher::start() {
     s_queue = xQueueCreate(SIM_CMD_QUEUE_SIZE, sizeof(SimCmdSlot*));
     if (s_queue == nullptr) {
-        LOG("SIM", "simDispatcherStart: 队列创建失败");
+        LOG("SIM", "SimDispatcher::start: 队列创建失败");
         return;
     }
     s_directTxnMutex = xSemaphoreCreateMutex();
     if (s_directTxnMutex == nullptr) {
-        LOG("SIM", "simDispatcherStart: 直接事务互斥锁创建失败");
+        LOG("SIM", "SimDispatcher::start: 直接事务互斥锁创建失败");
         vQueueDelete(s_queue);
         s_queue = nullptr;
         return;
@@ -214,7 +218,7 @@ void simDispatcherStart() {
                 nullptr, SIM_READER_TASK_PRIORITY, &s_task);
 }
 
-bool simSendCommand(const char* cmd, unsigned long timeoutMs,
+bool SimDispatcher::sendCommand(const char* cmd, unsigned long timeoutMs,
                     String* outResp, bool prio) {
     if (s_queue == nullptr) return false;
     if (cmd == nullptr) return false;
@@ -251,7 +255,7 @@ bool simSendCommand(const char* cmd, unsigned long timeoutMs,
     }
 
     // 必须使用 portMAX_DELAY 等待 reader task 给信号量，
-    // 不可自行超时：若 simSendCommand 提前返回，栈上的 slot 会被销毁，
+    // 不可自行超时：若 SimDispatcher::sendCommand 提前返回，栈上的 slot 会被销毁，
     // reader task 之后再 xSemaphoreGive(s_activeCmd->doneSem) 将访问
     // 悬空指针，导致崩溃。reader task 内部已有 timeoutMs 超时机制，
     // 最终一定会 Give 信号量（OK / ERROR / 超时三路均有 Give）。
@@ -264,7 +268,7 @@ bool simSendCommand(const char* cmd, unsigned long timeoutMs,
     return slot.isOk;
 }
 
-bool simPauseReader(unsigned long timeoutMs) {
+bool SimDispatcher::pauseReader(unsigned long timeoutMs) {
     if (s_task == nullptr) return true;
     if (s_directTxnMutex == nullptr) return false;
     if (xSemaphoreTake(s_directTxnMutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
@@ -285,39 +289,13 @@ bool simPauseReader(unsigned long timeoutMs) {
     return true;
 }
 
-void simResumeReader() {
+void SimDispatcher::resumeReader() {
     s_pauseRequested = false;
     if (s_directTxnMutex != nullptr) {
         xSemaphoreGive(s_directTxnMutex);
     }
 }
 
-bool simDispatcherRunning() {
+bool SimDispatcher::running() {
     return s_queue != nullptr;
-}
-
-String simQueryPhoneNumber(unsigned long timeoutMs) {
-    String resp;
-    bool ok = simSendCommand("AT+CNUM", timeoutMs, &resp, false);
-    if (!ok) return "";
-
-    int start = resp.indexOf("+CNUM:");
-    if (start < 0) return "";
-
-    // +CNUM: "","13900001234",129
-    // 第一对引号为 alpha 名称（可为空），第二对为实际号码
-    int q1 = resp.indexOf('"', start);
-    int q2 = (q1 >= 0) ? resp.indexOf('"', q1 + 1) : -1;
-    int q3 = (q2 >= 0) ? resp.indexOf('"', q2 + 1) : -1;
-    int q4 = (q3 >= 0) ? resp.indexOf('"', q3 + 1) : -1;
-    if (q3 >= 0 && q4 > q3) return resp.substring(q3 + 1, q4);
-
-    // 兜底：部分模组 alpha 字段无引号，格式为 +CNUM: ,"13900001234",type
-    // 与 /query?type=siminfo 端点使用相同的 ,"  解析逻辑
-    int idx = resp.indexOf(",\"", start);
-    if (idx >= 0) {
-        int ei = resp.indexOf('"', idx + 2);
-        if (ei > idx + 2) return resp.substring(idx + 2, ei);
-    }
-    return "";
 }

@@ -1,34 +1,47 @@
 #pragma once
 #include <Arduino.h>
+#include "sim_dispatcher.h"
 
+// SIM 卡运行状态枚举
 enum SimState {
-  SIM_UNKNOWN        = 0,
-  SIM_NOT_INSERTED   = 1,
-  SIM_NOT_READY      = 2,
-  SIM_INITIALIZING   = 3,
-  SIM_READY          = 4,
-  SIM_INIT_FAILED    = 5
+  SIM_UNKNOWN      = 0,    // 未知（启动初值）
+  SIM_NOT_INSERTED = 1,    // 未插卡
+  SIM_NOT_READY    = 2,    // 已插卡但未就绪（等待 PIN/网络注册等）
+  SIM_INITIALIZING = 3,    // 正在初始化（执行 AT 序列）
+  SIM_READY        = 4,    // 完全就绪，可以收发短信/电话
+  SIM_INIT_FAILED  = 5     // 初始化失败
 };
 
-void simInit();
-SimState simGetState();
-void simHandleURC(const String& line);
-void simTick();
+// SIM 业务层：负责 SIM 生命周期、状态机、缓存信息（号码/运营商/信号）。
+// 与底层 AT 通讯解耦：所有 AT 调度（互斥/队列/Reader Task）由 SimDispatcher 提供，
+// 本类仅在其上构建业务方法（如 queryPhoneNumber、fetchInfo）。
+class Sim {
+public:
+  // 初始化 SIM 子系统：UART、GPIO、状态变量；不会立刻发 AT。
+  static void     init();
 
-// SIM 就绪后，查询并缓存运营商/信号强度（由 main.cpp 调用）
-void simFetchInfo();
+  // 周期 tick：驱动状态机，必要时重试初始化、刷新信号强度等。
+  static void     tick();
 
-// 以下 getter 返回缓存值，若未就绪则返回"未知"
-String simGetCarrier();
-String simGetSignal();
-String simGetPhoneNum();
+  // 主动拉取一次 SIM 信息（运营商/信号/号码），通常 SIM_READY 后调用。
+  static void     fetchInfo();
 
-// 本机号码是否已成功查询（就绪后首次获取或重试成功后返回 true）
-bool simIsNumberReady();
+  // 注册 URC 回调到 SimDispatcher，并启动 Reader Task。
+  // 应在 setup() 末尾、所有模块初始化完毕后调用。
+  static void     startReaderTask();
 
-/**
- * @brief 注册 URC 回调后启动 SIM reader task。
- *        在 setup() 末尾所有模块初始化完成后调用。
- *        注意：simQueryPhoneNumber() 声明位于 sim/sim_dispatcher.h。
- */
-void simStartReaderTask();
+  // 状态与缓存值（READY 之前一律返回 "未知"）
+  static SimState state();
+  static String   carrier();
+  static String   signal();
+  static String   phoneNum();
+  static bool     isNumberReady();
+
+  // URC 路由入口：dispatcher 解析出的 URC 类型 → 转发到 SMS / Call / Sim 等模块。
+  static void     handleURC(const String& line);
+
+  // 业务方法：通过 AT+CNUM 查询本机号码（阻塞，最长 timeoutMs 毫秒）。
+  // 内部经 SimDispatcher::sendCommand 与互斥队列交互；安全可在任意上下文调用，
+  // 但**不要**在 Reader Task 自身的 URC 回调里调用，否则会死锁。
+  static String   queryPhoneNumber(unsigned long timeoutMs = 3000);
+};

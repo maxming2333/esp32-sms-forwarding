@@ -15,17 +15,17 @@
 
 /**
  * @brief 从本机号码推断区号（如 "86"），用于短号码补齐比对。
- *        使用 simGetPhoneNum() 返回的缓存值（在 SIM_READY 后由 sim 模块抓取并定期更新）。
+ *        使用 Sim::phoneNum() 返回的缓存值（在 SIM_READY 后由 sim 模块抓取并定期更新）。
  *
  * 关键设计约束：
- *   - 不可在此调用 simQueryPhoneNumber() / simSendCommand()。
+ *   - 不可在此调用 Sim::queryPhoneNumber() / SimDispatcher::sendCommand()。
  *     来电 +CLIP URC 路径在 SIM reader task 中执行，
  *     若再发起 AT 指令将自我阻塞 reader task → 死锁。
  *   - 每个传入号码做黑名单匹配时会调用本函数 N+1 次（N=黑名单条目数），
  *     必须保持 O(1) 且零阻塞。
  */
 inline String phoneExtractAreaCode() {
-    String phone = simGetPhoneNum();
+    String phone = Sim::phoneNum();
     if (phone.length() == 0 || phone.equals("未知") || phone.equals("未知号码")) return "";
     if (phone.startsWith("+")) phone = phone.substring(1);
     if (phone.startsWith("00")) phone = phone.substring(2);
