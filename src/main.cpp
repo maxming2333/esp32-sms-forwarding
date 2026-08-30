@@ -68,7 +68,11 @@ static void modemPowerCycle() {
   delayWithWdt(1200);
   LOG("MAIN", "EN 拉高：开启模组");
   digitalWrite(MODEM_EN_PIN, HIGH);
-  delayWithWdt(6000);
+  // 这里只做最小稳定延时，不再盲等固定时长：
+  // 拉高之后到 Sim::ensureFreshModemSession() 之间没有任何代码访问 Serial1
+  // （WiFi / NTP / LittleFS / HTTP 初始化都不碰模组），模组可以在那段时间里
+  // 并行启动；真正的「等 AT 就绪」由 ensureFreshModemSession 轮询完成。
+  delayWithWdt(500);
 }
 
 // ---------- Arduino entry points ----------
@@ -83,7 +87,10 @@ void setup() {
   Serial.begin(115200);
   delayWithWdt(1500);  // 替换裸 delay：此时尚未有任何输出，必须喂狗
 
-  Serial1.setRxBufferSize(500);
+  // RX 缓冲需容纳最长的一整行响应：AT+CSIM 透传完整 APDU 时
+  // "+CSIM: 516,\"<516 hex>\"" 约 530 字节，再加后续的 "OK"。
+  // 原值 500 会在 reader task 稍有延迟时溢出丢字节。
+  Serial1.setRxBufferSize(2048);
   Serial1.begin(115200, SERIAL_8N1, RXD, TXD);
 
   // Modem cold start
@@ -100,10 +107,10 @@ void setup() {
   ConfigStore::loadReboot(rebootSchedule);
   esp_task_wdt_reset();
 
-  Sim::init();
-  esp_task_wdt_reset();
-
   // WiFi
+  // 必须排在 Sim::init() 之前：SIM 初始化（CPIN/CFUN/CNUM/模组配置）是同步阻塞的，
+  // 放在前面会把拿到 IP 的时间整段推后。SIM 的网络注册等待已改为非阻塞状态机
+  // （见 Sim::tick），所以这里换序后开机到拿到 IP 只剩模组上电 + WiFi 自身耗时。
   WifiManager::setReconnectCallback([]{ TimeSync::syncNTP(); });
   WifiManager::init();
   esp_task_wdt_reset();
@@ -141,6 +148,15 @@ void setup() {
   Call::init();
   PushRetry::init();
   PushQueue::init();
+
+  // SIM 放在最后：此时 WiFi 已连上、HTTP 已可访问、Logger 已就绪（SIM 日志能落盘），
+  // 且模组从 EN 拉高到这里已有十几秒并行启动时间。
+  // 说明：HTTP 已先启动，若此刻有人访问网页的 AT 工具，SimDispatcher 队列尚未建立，
+  // sendCommand() 会立即返回 false（提示无响应），不会访问 Serial1，无冲突风险。
+  Sim::ensureFreshModemSession();   // 等 AT 就绪 + 保证卡会话是刚复位的干净状态
+  esp_task_wdt_reset();
+  Sim::init();
+  esp_task_wdt_reset();
   Sim::startReaderTask();
 
   digitalWrite(LED_BUILTIN, LOW);

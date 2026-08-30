@@ -1,5 +1,7 @@
 #include "sim_dispatcher.h"
 #include <Arduino.h>
+#include <esp_task_wdt.h>
+#include <new>
 #include "../logger/logger.h"
 
 // ---------- 文件级私有状态与辅助函数（匿名命名空间） ----------
@@ -105,7 +107,9 @@ void appendResponseLine(SimCmdSlot* slot, const String& line) {
 
 void simReaderTask(void*) {
     String lineBuf;
-    lineBuf.reserve(400);  // 预分配，SMS PDU hex 串典型长度约 340 字符
+    // 预分配：SMS PDU hex 串典型约 340 字符；AT+CSIM 的长响应行可达约 530 字符，
+    // 按 SIM_LINE_BUF_MAX 预留避免反复扩容
+    lineBuf.reserve(SIM_LINE_BUF_MAX);
 
     for (;;) {
         if (s_pauseRequested && s_activeCmd == nullptr) {
@@ -177,7 +181,7 @@ void simReaderTask(void*) {
         // 超时检测
         if (s_activeCmd != nullptr &&
             millis() - s_cmdStartMs > s_activeCmd->timeoutMs) {
-            LOG("SIMDSP", "AT 指令超时: %s", s_activeCmd->cmd);
+            LOG("SIMDSP", "AT 指令超时: %.96s", s_activeCmd->cmd);
             s_activeCmd->isOk = false;
             xSemaphoreGive(s_activeCmd->doneSem);
             s_activeCmd = nullptr;
@@ -219,49 +223,75 @@ bool SimDispatcher::sendCommand(const char* cmd, unsigned long timeoutMs,
     if (s_queue == nullptr) return false;
     if (cmd == nullptr) return false;
 
-    SimCmdSlot slot;
     size_t cmdLen = strlen(cmd);
-    if (cmdLen >= sizeof(slot.cmd)) {
+    if (cmdLen >= SIM_CMD_BUF_SIZE) {
         // AT 指令超长会被静默截断 → 模组返回 ERROR 难以排查；改为直接拒绝
-        LOG("SIMDSP", "AT 指令超长（%u ≥ %u），拒绝执行: %.32s...",
-            (unsigned)cmdLen, (unsigned)sizeof(slot.cmd), cmd);
+        LOG("SIMDSP", "AT 指令超长（%u ≥ %u），拒绝执行: %.64s...",
+            (unsigned)cmdLen, (unsigned)SIM_CMD_BUF_SIZE, cmd);
         return false;
     }
-    memcpy(slot.cmd, cmd, cmdLen);
-    slot.cmd[cmdLen]  = '\0';
-    slot.timeoutMs    = timeoutMs;
-    slot.respBuf[0]   = '\0';
-    slot.isOk         = false;
-    slot.priority     = prio;
 
-    slot.doneSem = xSemaphoreCreateBinary();
-    if (slot.doneSem == nullptr) return false;
+    // 堆分配：缓冲放大到能容纳完整 APDU 后 SimCmdSlot 约 1.2KB，
+    // 继续放在调用方栈上会给 async_tcp / loopTask 带来近 1KB 的额外栈压力。
+    SimCmdSlot* slot = new (std::nothrow) SimCmdSlot();
+    if (slot == nullptr) {
+        LOG("SIMDSP", "AT 指令槽分配失败（堆不足）: %.64s", cmd);
+        return false;
+    }
 
-    SimCmdSlot* ptr = &slot;
+    memcpy(slot->cmd, cmd, cmdLen);
+    slot->cmd[cmdLen] = '\0';
+    slot->timeoutMs   = timeoutMs;
+    slot->respBuf[0]  = '\0';
+    slot->isOk        = false;
+    slot->priority    = prio;
+
+    slot->doneSem = xSemaphoreCreateBinary();
+    if (slot->doneSem == nullptr) {
+        delete slot;
+        return false;
+    }
+
     BaseType_t sent;
     if (prio) {
-        sent = xQueueSendToFront(s_queue, &ptr, pdMS_TO_TICKS(100));
+        sent = xQueueSendToFront(s_queue, &slot, pdMS_TO_TICKS(100));
     } else {
-        sent = xQueueSendToBack(s_queue, &ptr, pdMS_TO_TICKS(100));
+        sent = xQueueSendToBack(s_queue, &slot, pdMS_TO_TICKS(100));
     }
 
     if (sent != pdTRUE) {
-        vSemaphoreDelete(slot.doneSem);
+        vSemaphoreDelete(slot->doneSem);
+        delete slot;
         return false;
     }
 
-    // 必须使用 portMAX_DELAY 等待 reader task 给信号量，
-    // 不可自行超时：若 SimDispatcher::sendCommand 提前返回，栈上的 slot 会被销毁，
+    // 必须一直等到 reader task 给信号量，不可自行超时：
+    // 若 SimDispatcher::sendCommand 提前返回并 delete 掉 slot，
     // reader task 之后再 xSemaphoreGive(s_activeCmd->doneSem) 将访问
     // 悬空指针，导致崩溃。reader task 内部已有 timeoutMs 超时机制，
     // 最终一定会 Give 信号量（OK / ERROR / 超时三路均有 Give）。
-    xSemaphoreTake(slot.doneSem, portMAX_DELAY);
-    vSemaphoreDelete(slot.doneSem);
-
-    if (outResp != nullptr) {
-        *outResp = String(slot.respBuf);
+    // reader task 在三条路径上都是「先解引用、再 Give、最后把 s_activeCmd 置空」，
+    // Give 之后不再解引用，因此本函数被唤醒后 delete 是安全的。
+    //
+    // 但不能用 portMAX_DELAY 一次性长睡：本函数会在 async_tcp 任务上下文中被
+    // HTTP 控制器调用（/at、/ping、/flight），而 async_tcp 已订阅 TWDT，
+    // Arduino-ESP32 的 TWDT 默认超时为 5s。一条 5000ms 超时的 AT 指令
+    // （如 AT+COPS=? 全网扫描）会让该任务整整 5s 不喂狗，直接触发
+    // "Task watchdog got triggered" 而 abort 重启。
+    // 因此改为分段等待：每 200ms 醒一次喂狗，但**永不提前返回**。
+    // 注：未订阅 TWDT 的任务（如 sim_reader）调用 esp_task_wdt_reset()
+    // 会返回 ESP_ERR_NOT_FOUND，无副作用，故忽略返回值。
+    while (xSemaphoreTake(slot->doneSem, pdMS_TO_TICKS(200)) != pdTRUE) {
+        esp_task_wdt_reset();
     }
-    return slot.isOk;
+    vSemaphoreDelete(slot->doneSem);
+
+    bool ok = slot->isOk;
+    if (outResp != nullptr) {
+        *outResp = String(slot->respBuf);
+    }
+    delete slot;
+    return ok;
 }
 
 bool SimDispatcher::pauseReader(unsigned long timeoutMs) {

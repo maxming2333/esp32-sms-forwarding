@@ -40,6 +40,36 @@ struct TrafficSM {
 
 static TrafficSM s_tsm;
 
+// ---------- C1: 网络注册等待状态机（非阻塞）----------
+//
+// 为什么不再同步等待：
+//   境外漫游卡实测从 CFUN=1 到驻留小区需要 60s 以上，注册总耗时可达 90s。
+//   若在 Sim::init() 里同步轮询，setup() 会被整段拖住，WiFi 与 HTTP 都要排在
+//   后面才能启动（实测开机到拿到 IP 接近 1 分钟）。因此把等待拆成状态机，
+//   由 Sim::tick() 驱动，init() 只负责发起。
+
+enum RegPhase : uint8_t {
+  RP_IDLE = 0,   // 未启动
+  RP_WAITING,    // 轮询中
+  RP_DONE,       // 已注册
+  RP_FAILED      // 超时或被网络明确拒绝
+};
+
+struct RegSM {
+  RegPhase      phase      = RP_IDLE;
+  int           attempts   = 0;
+  unsigned long nextPollMs = 0;
+  int           termCause  = -1;  // 上一轮读到的终态拒绝原因
+  int           termHits   = 0;   // 该原因连续出现次数
+};
+
+static RegSM s_rsm;
+
+// 注册轮询上限：45 次 × 2000ms = 90s。
+// 旧实现是 5 次 × 2000ms = 10s（日志里却写着 30 次），对境外漫游卡远远不够。
+constexpr int           SIM_REG_MAX_ATTEMPTS     = 45;
+constexpr unsigned long SIM_REG_POLL_INTERVAL_MS = 2000;
+
 // ---------- T005: AT helpers ----------
 
 static bool sendATandWaitOK(const char* cmd, unsigned long timeout) {
@@ -72,6 +102,127 @@ static bool runInitStep(const char* cmd, unsigned long timeout, int maxRetry, co
   }
   LOG("SIM", "%s 最终失败", stepName);
   return false;
+}
+
+// ---------- 通用 AT 交互（同时返回响应文本，兼容调度器未启动时的裸串口路径）----------
+
+static bool atExchange(const char* cmd, unsigned long timeoutMs, String* outResp) {
+  if (SimDispatcher::running()) {
+    return SimDispatcher::sendCommand(cmd, timeoutMs, outResp, false);
+  }
+  while (Serial1.available()) Serial1.read();
+  Serial1.println(cmd);
+  String resp;
+  bool ok = false;
+  unsigned long start = millis();
+  while (millis() - start < timeoutMs) {
+    while (Serial1.available()) resp += (char)Serial1.read();
+    if (resp.indexOf("OK") >= 0)    { ok = true;  break; }
+    if (resp.indexOf("ERROR") >= 0) { ok = false; break; }
+    delay(5);
+    esp_task_wdt_reset();
+  }
+  if (outResp != nullptr) *outResp = resp;
+  return ok;
+}
+
+// ---------- 模组会话新鲜度：等待 AT 就绪 ----------
+
+static bool waitAtReady(unsigned long timeoutMs) {
+  unsigned long start = millis();
+  int attempt = 0;
+  while (millis() - start < timeoutMs) {
+    attempt++;
+    if (atExchange("AT", 500, nullptr)) {
+      LOG("SIM", "模组 AT 就绪（第 %d 次探测，耗时 %lu ms）", attempt, millis() - start);
+      return true;
+    }
+    esp_task_wdt_reset();
+    delay(200);
+    esp_task_wdt_reset();
+  }
+  LOG("SIM", "模组 AT 在 %lu ms 内未就绪", timeoutMs);
+  return false;
+}
+
+// ---------- 模组会话新鲜度：检测卡会话是否干净 ----------
+//
+// 判据：MANAGE CHANNEL open（00 70 00 00 01）返回的通道号是否为 1。
+// 卡会话干净时首个逻辑通道必然是 1；返回 2/3 说明上次运行残留的通道仍在，
+// 返回 6A81 说明通道池已被残留占满。该判据直接测的就是我们关心的东西，
+// 不依赖 EN 引脚是否生效、也不依赖对模组启动耗时的猜测。
+// 检测用的通道会立即关闭（close 必须用 5 字节形式，4 字节 Case-1 会被 AT 层 ERROR）。
+//
+// 返回：0 = 干净，1 = 有残留，-1 = 无法判断（指令失败 / 模组不支持 AT+CSIM）
+static int probeCardSession() {
+  String resp;
+  if (!atExchange("AT+CSIM=10,\"0070000001\"", 3000, &resp)) {
+    LOG("SIM", "会话检查: MANAGE CHANNEL 指令失败，无法判断");
+    return -1;
+  }
+
+  int q1 = resp.indexOf('"');
+  int q2 = (q1 >= 0) ? resp.indexOf('"', q1 + 1) : -1;
+  if (q1 < 0 || q2 <= q1) {
+    LOG("SIM", "会话检查: 响应无法解析");
+    return -1;
+  }
+  String hex = resp.substring(q1 + 1, q2);
+  hex.trim();
+  hex.toUpperCase();
+
+  if (hex.indexOf("6A81") >= 0) {
+    LOG("SIM", "会话检查: 逻辑通道已耗尽(6A81)，存在残留");
+    return 1;
+  }
+  if (hex.length() >= 6 && hex.endsWith("9000")) {
+    int ch = (int)strtol(hex.substring(0, 2).c_str(), nullptr, 16);
+    // 用完立即关闭，避免检测本身制造泄漏
+    char closeCmd[40];
+    snprintf(closeCmd, sizeof(closeCmd), "AT+CSIM=10,\"007080%02X00\"", ch);
+    atExchange(closeCmd, 3000, nullptr);
+    if (ch == 1) {
+      LOG("SIM", "会话检查: 卡会话干净（首个逻辑通道 = 1）");
+      return 0;
+    }
+    LOG("SIM", "会话检查: 检测到残留逻辑通道（本次分配到 %d）", ch);
+    return 1;
+  }
+
+  LOG("SIM", "会话检查: 未预期的响应 %.32s", hex.c_str());
+  return -1;
+}
+
+// ---------- Sim::ensureFreshModemSession ----------
+
+void Sim::ensureFreshModemSession() {
+  bool needReset = true;
+
+  if (waitAtReady(8000)) {
+    if (probeCardSession() == 0) {
+      needReset = false;   // EN 引脚确实复位了模组，无需再动
+    }
+  } else {
+    LOG("SIM", "模组无响应，直接尝试软复位");
+  }
+
+  if (!needReset) return;
+
+  // 软复位，每次启动最多执行一次（不循环重试，避免启动被拖死）
+  LOG("SIM", "模组未被真正复位，执行软复位 AT+MREBOOT");
+  atExchange("AT+MREBOOT", 3000, nullptr);
+  delay(500);
+  esp_task_wdt_reset();
+
+  if (!waitAtReady(15000)) {
+    LOG("SIM", "软复位后模组仍未就绪，继续启动（SIM 可能不可用）");
+    return;
+  }
+  if (probeCardSession() == 0) {
+    LOG("SIM", "软复位完成，卡会话已重置");
+  } else {
+    LOG("SIM", "软复位后卡会话仍有残留，继续启动");
+  }
 }
 
 // ---------- US2: simTrafficTick — 数据流量控制（通过调度器发送 AT 指令）----------
@@ -132,9 +283,148 @@ static void simTrafficTick() {
   }
 }
 
-// ---------- T006 helper: CEREG polling ----------
+// ---------- T006 helper: 网络注册状态查询（CREG/CGREG 兜底用）----------
 
-static bool waitCEREG() {
+static bool queryRegState(const char* cmd, const char* prefix) {
+  String resp;
+  if (SimDispatcher::running()) {
+    SimDispatcher::sendCommand(cmd, 2000, &resp, false);
+  } else {
+    Serial1.println(cmd);
+    unsigned long start = millis();
+    while (millis() - start < 2000) {
+      while (Serial1.available()) { char c = Serial1.read(); resp += c; }
+      if (resp.indexOf(prefix) >= 0) break;
+    }
+  }
+  int pfx = resp.indexOf(prefix);
+  if (pfx < 0) return false;
+
+  // 响应格式为 "+CxREG: <n>,<stat>[,...]"，必须精确取出 <stat> 字段再比较数值，
+  // 不能用子串匹配（例如 ",1" 会误命中 ",11" ",15" 等两位数 stat，导致误判为已注册）
+  int commaIdx = resp.indexOf(',', pfx);
+  if (commaIdx < 0) return false;
+  int statStart = commaIdx + 1;
+  int statEnd   = statStart;
+  while (statEnd < (int)resp.length() && isDigit(resp[statEnd])) statEnd++;
+  if (statEnd == statStart) return false;
+  int stat = resp.substring(statStart, statEnd).toInt();
+  return stat == 1 || stat == 5;  // 1=已注册(本地网)，5=已注册(漫游)
+}
+
+// ---------- B1/B5 helper: EMM 拒绝原因（3GPP TS 24.301 §9.9.3.9）----------
+
+static const char* emmCauseDesc(int cause) {
+  switch (cause) {
+    case 3:  return "非法 UE";
+    case 6:  return "非法 ME（IMEI 不被接受）";
+    case 7:  return "不允许 EPS 业务（该订阅未开通数据）";
+    case 8:  return "不允许 EPS 与非 EPS 业务";
+    case 11: return "PLMN 不允许接入";
+    case 12: return "跟踪区不允许";
+    case 13: return "该跟踪区不允许漫游";
+    case 14: return "本 PLMN 不允许 EPS 业务（无数据漫游权限）";
+    case 15: return "跟踪区内无合适小区";
+    case 16: return "MSC 暂不可达";
+    case 17: return "网络故障";
+    case 18: return "CS 域不可用";
+    case 19: return "ESM 失败（PDN/APN 请求被拒）";
+    case 22: return "网络拥塞";
+    default: return "未列举";
+  }
+}
+
+// 网络已明确拒绝该卡接入，重试不会改变结果，应立即判定失败。
+// 其余原因（15 无合适小区、16 MSC 不可达、17 网络故障、19 ESM 失败、22 拥塞等）
+// 属于可能自愈的瞬态情形，继续重试到超时为止。
+static bool isTerminalRejectCause(int cause) {
+  switch (cause) {
+    case 3:   // 非法 UE
+    case 6:   // 非法 ME
+    case 7:   // 不允许 EPS 业务
+    case 8:   // 不允许 EPS 与非 EPS 业务
+    case 11:  // PLMN 不允许
+    case 14:  // 本 PLMN 不允许 EPS 业务
+      return true;
+    default:
+      return false;
+  }
+}
+
+// ---------- B1/B4 helper: 查询 CEREG，同时取出 <stat> 与 EMM <reject_cause> ----------
+//
+// 读命令响应格式（<n>=3/5 时才带原因）：
+//   +CEREG: <n>,<stat>[,<tac>,<ci>,<AcT>[,<cause_type>,<reject_cause>]]
+// 主动上报（URC）少一个 <n> 字段：
+//   +CEREG: <stat>,<tac>,<ci>,<AcT>[,<cause_type>,<reject_cause>]
+// "+CEREG:" 不在 SimDispatcher 的 URC 过滤名单里，所以响应缓冲中可能同时混入
+// 一条 URC 和一条读命令响应，需要按字段个数区分两种形态。
+//
+// outStat / outCause 无法取得时置 -1。返回 false 表示整行都没解析出来。
+// outFields 回传切出的字段个数，供调用方在多行之间挑选可信度最高的一行。
+static bool parseCeregLine(const String& line, int* outStat, int* outCause, int* outFields) {
+  int pfx = line.indexOf("+CEREG:");
+  if (pfx < 0) return false;
+
+  String body = line.substring(pfx + 7);
+  int nl = body.indexOf('\n');
+  if (nl >= 0) body = body.substring(0, nl);
+  body.trim();
+
+  // 按逗号切分，最多 7 段
+  String f[7];
+  int nField = 0;
+  int start  = 0;
+  for (int i = 0; i <= (int)body.length() && nField < 7; i++) {
+    if (i == (int)body.length() || body[i] == ',') {
+      f[nField] = body.substring(start, i);
+      f[nField].trim();
+      nField++;
+      start = i + 1;
+    }
+  }
+  if (nField == 0) return false;
+  if (outFields) *outFields = nField;
+
+  int statIdx, causeIdx;
+  if (nField >= 7) {
+    // 读命令响应且带原因：<n>,<stat>,<tac>,<ci>,<AcT>,<cause_type>,<reject_cause>
+    statIdx = 1; causeIdx = 6;
+  } else if (nField == 6) {
+    // URC 且带原因：<stat>,<tac>,<ci>,<AcT>,<cause_type>,<reject_cause>
+    statIdx = 0; causeIdx = 5;
+  } else if (nField >= 2) {
+    // 读命令响应但未带原因（<n>=0/1/2/4）
+    statIdx = 1; causeIdx = -1;
+  } else {
+    // 仅 <stat> 的精简 URC
+    statIdx = 0; causeIdx = -1;
+  }
+
+  const String& statStr = f[statIdx];
+  if (statStr.length() == 0) return false;
+  for (int i = 0; i < (int)statStr.length(); i++) {
+    if (!isDigit(statStr[i])) return false;
+  }
+  if (outStat) *outStat = statStr.toInt();
+
+  if (outCause) {
+    *outCause = -1;
+    if (causeIdx >= 0 && f[causeIdx].length() > 0) {
+      bool allDigit = true;
+      for (int i = 0; i < (int)f[causeIdx].length(); i++) {
+        if (!isDigit(f[causeIdx][i])) { allDigit = false; break; }
+      }
+      if (allDigit) *outCause = f[causeIdx].toInt();
+    }
+  }
+  return true;
+}
+
+// 发一次 AT+CEREG? 并解析。缓冲里可能同时混入 CEREG 主动上报（少一个 <n> 字段）
+// 和读命令响应，因此在所有 "+CEREG:" 行中挑字段数最多的那一行——字段数为 7 才是
+// 带 reject cause 的读命令响应，可信度最高；字段数相同时取靠后的一行。
+static bool queryCeregDetail(int* outStat, int* outCause) {
   String resp;
   if (SimDispatcher::running()) {
     SimDispatcher::sendCommand("AT+CEREG?", 2000, &resp, false);
@@ -146,18 +436,58 @@ static bool waitCEREG() {
       if (resp.indexOf("+CEREG:") >= 0) break;
     }
   }
-  if (resp.indexOf("+CEREG:") >= 0) {
-    if (resp.indexOf(",1") >= 0 || resp.indexOf(",5") >= 0) return true;
-    if (resp.indexOf(",0") >= 0 || resp.indexOf(",2") >= 0 ||
-        resp.indexOf(",3") >= 0 || resp.indexOf(",4") >= 0) return false;
+
+  bool found      = false;
+  int  bestStat   = -1;
+  int  bestCause  = -1;
+  int  bestFields = -1;
+  int  searchPos  = 0;
+  while (true) {
+    int pfx = resp.indexOf("+CEREG:", searchPos);
+    if (pfx < 0) break;
+    int lineEnd = resp.indexOf('\n', pfx);
+    String line = (lineEnd < 0) ? resp.substring(pfx) : resp.substring(pfx, lineEnd);
+    searchPos   = (lineEnd < 0) ? resp.length() : lineEnd + 1;
+
+    int stat = -1, cause = -1, nField = 0;
+    if (parseCeregLine(line, &stat, &cause, &nField) && nField >= bestFields) {
+      bestStat   = stat;
+      bestCause  = cause;
+      bestFields = nField;
+      found      = true;
+    }
   }
-  return false;
+
+  if (!found) return false;
+  if (outStat)  *outStat  = bestStat;
+  if (outCause) *outCause = bestCause;
+  return true;
 }
 
-// ---------- T006 helper: 模组配置（CNMI/CMGF/CLIP，必须在 CFUN=1 射频恢复后调用，
+// ---------- T006 helper: 模组配置（必须在 CFUN=1 射频恢复后调用，
 //            CFUN=4→1 切换会重置这些非持久化设置）----------
 
 static bool runModemConfig() {
+  // 强制自动选网模式，避免模组残留上一张卡的手动选网/漫游 PLMN 锁定状态，
+  // 导致换卡后无法重新搜网注册；部分模组该指令耗时较长，失败不阻断初始化
+  runInitStep("AT+COPS=0", 5000, 1, "COPS自动选网");
+
+  // B1: 打开带 EMM reject cause 的注册状态上报。
+  // 只有 <n>=3/5 会在 +CEREG 中附带 <cause_type>,<reject_cause>，
+  // 注册失败时这是唯一能区分"搜不到网 / 被网络拒绝 / APN 请求被拒"的信息。
+  // 部分模组不支持 <n>=3，降级到 <n>=2（仅状态，无原因）。
+  if (!runInitStep("AT+CEREG=3", 1000, 2, "CEREG上报(带拒绝原因)")) {
+    runInitStep("AT+CEREG=2", 1000, 2, "CEREG上报(降级为仅状态)");
+  }
+
+  // B2: 定义空 APN 的默认 PDP 上下文。
+  // LTE 的 Attach Request 会捎带 PDN Connectivity Request，模组默认使用固件内置
+  // APN（通常是国内 APN）。漫游时该 APN 未被订阅授权会导致整个 Attach 被拒
+  // （实测 ML307C 上表现为 EMM cause 19 ESM failure），留空让网络下发最安全。
+  // 注意：该配置**不写入模组 NVM**，模组重启即丢失（实测 AT+MREBOOT 后 cause
+  // 会从 15 退回 19），因此必须放在每次初始化都会执行的路径里。
+  runInitStep("AT+CGDCONT=1,\"IP\",\"\"", 1000, 2, "默认PDP上下文(空APN)");
+
   if (!runInitStep("AT+CNMI=2,2,0,0,0", 1000, 3, "CNMI")) return false;
   if (!runInitStep("AT+CMGF=0", 1000, 3, "CMGF")) return false;
   runInitStep("AT+CLIP=1", 1000, 3, "CLIP");   // 启用主叫号码上报，失败不阻断初始化
@@ -165,31 +495,97 @@ static bool runModemConfig() {
   return true;
 }
 
-// ---------- T006 helper: 等待网络注册（需射频在线，在 CFUN=1 之后调用）----------
+// ---------- C1: 注册等待状态机 ----------
 
-static bool runNetworkWait() {
-  // 轮询 CEREG，最多 30 次 × 2s = 60s
-  for (int i = 0; i < 30; i++) {
-    if (waitCEREG()) {
-      LOG("SIM", "网络已注册");
-      return true;
-    }
-    LOG("SIM", "等待网络注册... %d/30", i + 1);
-    // 每次失败后等待 2 秒再重试，分段喂狗避免 TWDT 触发
-    unsigned long waitStart = millis();
-    while (millis() - waitStart < 2000) {
-      delay(300);
-      esp_task_wdt_reset();
-    }
-  }
-  LOG("SIM", "网络注册超时");
-  return false;
+static void startRegWait() {
+  s_rsm.phase      = RP_WAITING;
+  s_rsm.attempts   = 0;
+  s_rsm.nextPollMs = millis();
+  LOG("SIM", "等待网络注册（最多 %d 次 × %lu ms ≈ %lu s）",
+      SIM_REG_MAX_ATTEMPTS, SIM_REG_POLL_INTERVAL_MS,
+      (unsigned long)SIM_REG_MAX_ATTEMPTS * SIM_REG_POLL_INTERVAL_MS / 1000);
 }
 
-// ---------- T006 helper: 完整初始化序列（热插入路径使用，不含 CFUN 门控）----------
+static void onRegSuccess() {
+  s_rsm.phase = RP_DONE;
+  // 网络就绪后尝试 SIM 时间同步
+  TimeSync::syncFromSIM();
+  s_state            = SIM_READY;
+  s_tsm.state        = TS_PENDING;
+  s_tsm.triggerMs    = millis();
+  s_tsm.lastActionMs = millis();
+  LOG("SIM", "网络已注册，SIM 初始化成功");
+}
 
-static bool runInitSequence() {
-  return runModemConfig() && runNetworkWait();
+static void onRegFailure(const char* reason) {
+  s_rsm.phase = RP_FAILED;
+  s_state     = SIM_INIT_FAILED;
+  LOG("SIM", "SIM 初始化失败：%s", reason);
+}
+
+// 由 Sim::tick() 每轮调用；仅在 RP_WAITING 阶段做事，单次最多发 1~3 条 AT 指令。
+static void regWaitTick() {
+  if (s_rsm.phase != RP_WAITING) return;
+  if ((long)(millis() - s_rsm.nextPollMs) < 0) return;
+  s_rsm.nextPollMs = millis() + SIM_REG_POLL_INTERVAL_MS;
+
+  // B4: CEREG 优先。ML307 系列为 LTE only 产品，实测 AT+CREG? / AT+CGREG? /
+  // AT+CEER 均返回 ERROR，只有 CEREG 有效；且 CEREG 这一条就能同时拿到
+  // <stat> 与 reject cause，正常路径每轮只需一次 AT 往返。
+  int  stat  = -1;
+  int  cause = -1;
+  bool gotCereg   = queryCeregDetail(&stat, &cause);
+  bool registered = gotCereg && (stat == 1 || stat == 5);
+
+  if (!gotCereg) {
+    // CEREG 不可用（非 LTE 模组）时退回 2G/3G 的电路域/分组域注册状态
+    registered = queryRegState("AT+CREG?", "+CREG:")
+              || queryRegState("AT+CGREG?", "+CGREG:");
+  }
+
+  if (registered) { onRegSuccess(); return; }
+
+  char reason[128];
+
+  // B5: 被网络明确拒绝时提前失败，不再重试到超时。
+  // 要求同一个终态原因连续出现两轮才判定，避免正常卡遇到一次瞬态异常上报就被判死。
+  if (isTerminalRejectCause(cause)) {
+    if (cause == s_rsm.termCause) {
+      s_rsm.termHits++;
+    } else {
+      s_rsm.termCause = cause;
+      s_rsm.termHits  = 1;
+    }
+    if (s_rsm.termHits >= 2) {
+      snprintf(reason, sizeof(reason), "网络拒绝注册（EMM cause %d: %s）",
+               cause, emmCauseDesc(cause));
+      onRegFailure(reason);
+      return;
+    }
+  } else {
+    s_rsm.termCause = -1;
+    s_rsm.termHits  = 0;
+  }
+
+  s_rsm.attempts++;
+  if (s_rsm.attempts >= SIM_REG_MAX_ATTEMPTS) {
+    if (cause >= 0) {
+      snprintf(reason, sizeof(reason), "网络注册超时（stat=%d，EMM cause %d: %s）",
+               stat, cause, emmCauseDesc(cause));
+    } else {
+      snprintf(reason, sizeof(reason), "网络注册超时（stat=%d）", stat);
+    }
+    onRegFailure(reason);
+    return;
+  }
+
+  if (cause >= 0) {
+    LOG("SIM", "等待网络注册... %d/%d（stat=%d，EMM cause %d: %s）",
+        s_rsm.attempts, SIM_REG_MAX_ATTEMPTS, stat, cause, emmCauseDesc(cause));
+  } else {
+    LOG("SIM", "等待网络注册... %d/%d（stat=%d）",
+        s_rsm.attempts, SIM_REG_MAX_ATTEMPTS, stat);
+  }
 }
 
 // ---------- T006: Sim::init ----------
@@ -251,20 +647,11 @@ void Sim::init() {
     return;
   }
 
-  // 步骤4: 等待网络注册
-  LOG("SIM", "等待网络注册");
-  if (runNetworkWait()) {
-    // 步骤5: 网络就绪后尝试 SIM 时间同步
-    TimeSync::syncFromSIM();
-    s_state            = SIM_READY;
-    s_tsm.state        = TS_PENDING;
-    s_tsm.triggerMs    = millis();
-    s_tsm.lastActionMs = millis();
-    LOG("SIM", "SIM 初始化成功");
-  } else {
-    s_state = SIM_INIT_FAILED;
-    LOG("SIM", "SIM 初始化失败");
-  }
+  // 步骤4: 发起网络注册等待后立即返回，不在此阻塞。
+  // 注册最长可达 90s（境外漫游卡实测 >60s 才驻留小区），若在此同步等待会把
+  // setup() 后续的 WiFi/HTTP 一起拖住。轮询交给 Sim::tick() → regWaitTick()，
+  // 注册成功/失败时才会把 s_state 推进到 SIM_READY / SIM_INIT_FAILED。
+  startRegWait();
 }
 
 // ---------- Sim::state ----------
@@ -292,6 +679,7 @@ void Sim::handleURC(const String& line) {
     s_state      = SIM_NOT_INSERTED;
     s_needReinit = false;
     s_tsm        = TrafficSM{};
+    s_rsm        = RegSM{};   // 停止注册轮询，避免对着已拔出的卡继续发 AT
     LOG("SIM", "SIM 卡已拔出，状态已清除");
     if (config.simNotifyEnabled && prev == SIM_READY) {
       Push::send("设备", "SIM 卡已拔出，当前状态：未插入", TimeSync::dateStr(), MsgTypeInfo(MSG_TYPE_SIM));
@@ -307,18 +695,17 @@ void Sim::tick() {
     s_needReinit = false;
     s_state      = SIM_INITIALIZING;
     LOG("SIM", "开始热插入重新初始化");
-    if (runInitSequence()) {
-      s_state            = SIM_READY;
-      s_tsm.state        = TS_PENDING;
-      s_tsm.triggerMs    = millis();
-      s_tsm.lastActionMs = millis();
-      LOG("SIM", "热插入初始化成功");
+    // 与开机路径一致：配置完成后交给注册状态机轮询，不在 loop 里阻塞 90s
+    if (runModemConfig()) {
+      startRegWait();
     } else {
-      s_state = SIM_INIT_FAILED;
-      LOG("SIM", "热插入初始化失败");
+      s_rsm.phase = RP_FAILED;
+      s_state     = SIM_INIT_FAILED;
+      LOG("SIM", "热插入初始化失败（模组配置阶段）");
     }
   }
 
+  regWaitTick();
   simTrafficTick();
 
   // T008: 本机号码重试查询（独立于 SIM 状态，只要调度器在线且号码未就绪就持续重试）

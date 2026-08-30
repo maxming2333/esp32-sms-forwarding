@@ -19,6 +19,15 @@ constexpr unsigned long SIM_NUMBER_RETRY_INTERVAL_MS = 5000;
 // 本类仅在其上构建业务方法（如 queryPhoneNumber、fetchInfo）。
 class Sim {
 public:
+  // 确保模组处于「刚复位」的干净状态。必须在 init() 之前调用一次。
+  //
+  // 背景：main.cpp 的 modemPowerCycle() 通过 GPIO 拉动模组 EN 引脚，但实测在部分
+  // 核心板上它并不会真正复位模组——上一次运行残留的逻辑通道会跨 ESP32 重启存活。
+  // 本方法用「MANAGE CHANNEL open 返回的通道号是否为 1」直接检测卡会话是否干净，
+  // 不干净则用 AT+MREBOOT 软复位兜底（实测复位到 SIM 可用约 2.3s）。
+  // 顺带把残留逻辑通道清掉，并保证返回时 AT 接口已就绪。
+  static void     ensureFreshModemSession();
+
   // 初始化 SIM 子系统：UART、GPIO、状态变量；不会立刻发 AT。
   static void     init();
 

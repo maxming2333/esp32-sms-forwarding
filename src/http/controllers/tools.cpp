@@ -17,6 +17,14 @@
 // ── CSRF Token（内存态，非持久化）──────────────────────────────
 static String g_resetToken = "";
 
+// ── 网页 AT 工具的超时范围 ──────────────────────────────────────
+// 默认 5s 覆盖绝大多数指令；上限放宽到 180s 是为了 AT+COPS=? 这类
+// 全网频段扫描（3GPP 允许最长 180s），固定 5s 会直接超时拿不到结果。
+// SimDispatcher::sendCommand 内部已分段喂狗，长超时不会再触发 TWDT。
+static constexpr unsigned long AT_TOOL_TIMEOUT_DEFAULT_MS = 5000;
+static constexpr unsigned long AT_TOOL_TIMEOUT_MIN_MS     = 1000;
+static constexpr unsigned long AT_TOOL_TIMEOUT_MAX_MS     = 180000;
+
 // ── shared helpers ──────────────────────────────────────────────────
 // sendATCommand: 通过 SimCommandDispatcher 串行发送 AT 指令并返回响应字符串
 static String sendATCommand(const char* cmd, unsigned long timeoutMs) {
@@ -314,8 +322,17 @@ void atCommandController(AsyncWebServerRequest* request) {
   String cmd = request->hasParam("cmd") ? request->getParam("cmd")->value() : "";
   if (cmd.length() == 0) { sendJsonResponse(request, false, "错误：指令不能为空"); return; }
 
-  LOG("HTOOLS", "网页端发送AT指令: %s", cmd.c_str());
-  String resp = sendATCommand(cmd.c_str(), 5000);
+  // 可选 timeout 参数（毫秒），钳制到 [MIN, MAX]，未指定时用默认值
+  unsigned long timeoutMs = AT_TOOL_TIMEOUT_DEFAULT_MS;
+  if (request->hasParam("timeout")) {
+    long v = request->getParam("timeout")->value().toInt();
+    if (v < (long)AT_TOOL_TIMEOUT_MIN_MS) v = (long)AT_TOOL_TIMEOUT_MIN_MS;
+    if (v > (long)AT_TOOL_TIMEOUT_MAX_MS) v = (long)AT_TOOL_TIMEOUT_MAX_MS;
+    timeoutMs = (unsigned long)v;
+  }
+
+  LOG("HTOOLS", "网页端发送AT指令: %s（超时 %lu ms）", cmd.c_str(), timeoutMs);
+  String resp = sendATCommand(cmd.c_str(), timeoutMs);
   LOG("HTOOLS", "模组响应: %s", resp.c_str());
 
   if (resp.length() > 0) {

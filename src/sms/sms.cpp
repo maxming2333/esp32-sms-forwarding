@@ -191,6 +191,10 @@ static bool sendOnePDU(const char* phoneNumber, const char* message, unsigned sh
     if (Serial1.available()) {
       char c = Serial1.read();
       if (c == '>') { gotPrompt = true; break; }
+    } else {
+      // 让出 CPU：此回调运行在 async_tcp 任务上下文，纯自旋忙等会导致该任务
+      // 无法回到自身服务循环，进而触发 async_tcp 的看门狗 abort（已实测崩溃）
+      delay(5);
     }
   }
   if (!gotPrompt) {
@@ -234,6 +238,7 @@ static bool sendOnePDU(const char* phoneNumber, const char* message, unsigned sh
       LOG("SMS", "短信发送成功（+CMGS已确认）");
       return true;
     }
+    delay(5);
   }
   SimDispatcher::resumeReader();
   LOG("SMS", "短信发送超时，已收到: %s", resp.c_str());

@@ -12,18 +12,30 @@ constexpr int          SIM_CMD_QUEUE_SIZE        = 16;
 constexpr uint32_t     SIM_READER_TASK_STACK     = 4096;
 // Reader Task 优先级（高于普通 loop，避免长 HTTP 处理时阻塞 SIM URC）
 constexpr UBaseType_t  SIM_READER_TASK_PRIORITY  = 3;
-constexpr size_t        SIM_RESP_BUF_SIZE          = 256;
-constexpr size_t        SIM_LINE_BUF_MAX           = 512;
+
+// ---------- 缓冲尺寸 ----------
+// 尺寸由「透传完整 APDU」这一最大用例决定（AT+CSIM，用于把 APDU 中继给 SIM 卡）：
+//   ISO 7816-4 短格式 APDU 上限 = CLA/INS/P1/P2/Lc(5) + 数据(255) + Le(1) = 261 字节
+//   → hex 编码 522 字符
+//   命令侧：AT+CSIM=522,"<522 hex>"  = 13 + 522 + 1 = 536 字符（+NUL）
+//   响应侧：+CSIM: 516,"<516 hex>"   = 12 + 516 + 1 = 529 字符，再加 "\nOK\n"
+// 旧值 cmd[64] / resp[256] / line[512] 会让 AT+CSIM 的 AUTHENTICATE(93 字符) 被
+// 直接拒绝、长响应行被丢弃，因此三者一起放大并留出余量。
+constexpr size_t        SIM_CMD_BUF_SIZE           = 576;
+constexpr size_t        SIM_RESP_BUF_SIZE          = 640;
+constexpr size_t        SIM_LINE_BUF_MAX           = 768;
 constexpr unsigned long SIM_TIMEOUT_DRAIN_QUIET_MS = 300;
 
-// 单条 AT 命令上下文（调用方栈上分配，仅入队指针；同步信号量在槽内创建）
+// 单条 AT 命令上下文。
+// 注意：由 sendCommand() 在**堆上**分配（缓冲放大后本结构约 1.2KB，放在调用方
+// 栈上会给 async_tcp / loopTask 带来近 1KB 的额外栈压力）。同步信号量在槽内创建。
 struct SimCmdSlot {
-  char              cmd[64];        // AT 命令字符串
-  unsigned long     timeoutMs;      // 超时时间
-  char              respBuf[256];   // 响应缓冲（截断时仍保留前 255 字节）
-  SemaphoreHandle_t doneSem;        // 完成信号量（Reader Task → 调用方）
-  bool              isOk;           // OK / ERROR
-  bool              priority;       // 优先命令（插队到队头）
+  char              cmd[SIM_CMD_BUF_SIZE];        // AT 命令字符串
+  unsigned long     timeoutMs;                    // 超时时间
+  char              respBuf[SIM_RESP_BUF_SIZE];   // 响应缓冲（截断时保留前 N-1 字节）
+  SemaphoreHandle_t doneSem;                      // 完成信号量（Reader Task → 调用方）
+  bool              isOk;                         // OK / ERROR
+  bool              priority;                     // 优先命令（插队到队头）
 };
 
 // URC 类型枚举（dispatcher 只做最小解析，业务字段交回上层）
