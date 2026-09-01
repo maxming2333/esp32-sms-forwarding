@@ -1,6 +1,7 @@
 #include "sim_dispatcher.h"
 #include <Arduino.h>
 #include <esp_task_wdt.h>
+#include <strings.h>
 #include <new>
 #include "../logger/logger.h"
 
@@ -45,6 +46,44 @@ bool isUrcLine(const String& line) {
     if (line.startsWith("+SIMCARD:"))          return true;
     if (line.startsWith("+CUSD:"))             return true;
     return false;
+}
+
+// ---------- 已发出命令的「自身信息响应」识别 ----------
+
+// 从命令推导它自己的信息响应前缀：AT+CPIN? → "+CPIN:"，AT+CGDCONT=1 → "+CGDCONT:"。
+// 只做纯语法推导，不含任何命令知识表。
+void expectedInfoPrefix(const char* cmd, char* out, size_t outSize) {
+    if (out == nullptr || outSize < 3) return;
+    out[0] = '\0';
+    if (cmd == nullptr) return;
+    const char* p = cmd;
+    while (*p == ' ') p++;
+    if (strncasecmp(p, "AT", 2) != 0) return;
+    p += 2;
+    if (*p != '+' && *p != '#' && *p != '$' && *p != '^' && *p != '&') return;
+    size_t i = 0;
+    out[i++] = *p++;
+    while (*p != '\0' && *p != '=' && *p != '?' && *p != ';' && i + 2 < outSize) {
+        out[i++] = *p++;
+    }
+    out[i++] = ':';
+    out[i]   = '\0';
+}
+
+// 活跃命令的信息响应，是否被 isUrcLine() 误判为主动上报。
+//
+// 背景：+CPIN: 既是主动上报（插卡就绪）也是 AT+CPIN? 的信息响应。isUrcLine() 只看
+// 行本身，因此在 AT+CPIN? 在途时会把它自己的应答当成 URC 吞掉，调用方只拿到 "OK"，
+// SIM 插卡状态查询因此永远得不到结论。判据用「该行前缀是否等于本命令自身的响应
+// 前缀」——这是唯一无需命令知识表就能区分的信号。
+//
+// 等待 PDU 数据行时一律不认定为信息响应：那一行属于上一条 +CMT: 上报。
+bool solicitedInfoLine(const SimCmdSlot* slot, const String& line) {
+    if (slot == nullptr || s_waitingPdu) return false;
+    char prefix[40];
+    expectedInfoPrefix(slot->cmd, prefix, sizeof(prefix));
+    if (prefix[0] == '\0') return false;
+    return line.startsWith(prefix);
 }
 
 // ---------- 内部 URC 路由 ----------
@@ -131,8 +170,9 @@ void simReaderTask(void*) {
                 if (line.length() == 0) continue;
 
                 if (s_activeCmd != nullptr) {
-                    // T015: 有活跃指令时先检查是否为 URC 行
-                    if (isUrcLine(line)) {
+                    // T015: 有活跃指令时先检查是否为 URC 行；但本命令自身的信息
+                    // 响应不能被当作 URC 吞掉（见 solicitedInfoLine 注释）。
+                    if (isUrcLine(line) && !solicitedInfoLine(s_activeCmd, line)) {
                         LOG("SIMDSP", "[URC-during-cmd] %s", line.c_str());
                         routeURC(line);
                     } else {
