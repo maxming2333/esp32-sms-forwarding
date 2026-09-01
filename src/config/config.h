@@ -70,6 +70,9 @@ struct Config {
   bool         simNotifyEnabled;
   bool         dataTraffic;
   bool         logFileEnabled;
+  // USB AT 透传模式：开机时不启动 SimDispatcher，把模组 AT 接口原样交给 USB 主机。
+  // 开启后设备不再接收短信与来电，仅作为 USB AT 通道，改动后需重启生效。
+  bool         atBridgeEnabled;
   WifiEntry    wifiList[MAX_WIFI_ENTRIES];
   int          wifiCount;
   String       blacklist[MAX_BLACKLIST_ENTRIES];

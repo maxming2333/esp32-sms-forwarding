@@ -571,6 +571,22 @@
                 写入日志文件（将日志持久化到 Flash，关闭可减少 Flash 擦写次数延长寿命）
               </label>
             </div>
+            <div class="form-group">
+              <label>
+                <input
+                  type="checkbox"
+                  name="atBridgeEnabled"
+                  id="atBridgeEnabled"
+                />
+                USB AT 透传模式（把模组 AT 接口原样交给 USB 主机，供 pySim / minicom
+                等工具直接操作模组与 SIM 卡）
+              </label>
+              <p class="hint">
+                ⚠️ 开启后本设备<b>不再接收短信和来电</b>，仅作为 USB AT 通道；USB
+                口也不再输出日志（日志改从本页查看）。<b>保存后需重启才生效</b>，
+                取消勾选并重启即可恢复正常模式。
+              </p>
+            </div>
           </div>
 
           <button type="submit" id="saveBtn">💾 保存配置</button>
@@ -1126,6 +1142,8 @@
           !!data.dataTraffic;
         document.getElementById("logFileEnabled").checked =
           !!data.logFileEnabled;
+        document.getElementById("atBridgeEnabled").checked =
+          !!data.atBridgeEnabled;
 
         var channels = data.pushChannels || [];
         g_pushChannels = [];

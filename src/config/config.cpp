@@ -58,6 +58,7 @@ void ConfigStore::load() {
   config.simNotifyEnabled = prefs.isKey("simNotify") ? prefs.getBool("simNotify", false) : false;
   config.dataTraffic      = prefs.getBool("dataTraffic", false);
   config.logFileEnabled   = prefs.isKey("logFile") ? prefs.getBool("logFile", false) : false;
+  config.atBridgeEnabled  = prefs.isKey("atBridge") ? prefs.getBool("atBridge", false) : false;
 
   if (prefs.isKey("wifiCount")) {
     config.wifiCount = constrain((int)prefs.getUChar("wifiCount", 0), 0, MAX_WIFI_ENTRIES);
@@ -132,6 +133,7 @@ void ConfigStore::save() {
   prefs.putBool("simNotify",   config.simNotifyEnabled);
   prefs.putBool("dataTraffic", config.dataTraffic);
   prefs.putBool("logFile",     config.logFileEnabled);
+  prefs.putBool("atBridge",    config.atBridgeEnabled);
 
   prefs.putUChar("wifiCount", (uint8_t)config.wifiCount);
   for (int i = 0; i < config.wifiCount; i++) {
@@ -290,6 +292,7 @@ void ConfigStore::toJson(JsonDocument& doc) {
   general["simNotifyEnabled"] = config.simNotifyEnabled;
   general["dataTraffic"]      = config.dataTraffic;
   general["logFileEnabled"]   = config.logFileEnabled;
+  general["atBridgeEnabled"]  = config.atBridgeEnabled;
   general["pushStrategy"]     = (int)config.pushStrategy;
   general["remark"]           = config.remark;
 
@@ -336,6 +339,7 @@ void ConfigStore::fromJson(JsonDocument& doc) {
     config.simNotifyEnabled = g["simNotifyEnabled"] | config.simNotifyEnabled;
     config.dataTraffic      = g["dataTraffic"]      | config.dataTraffic;
     config.logFileEnabled   = g["logFileEnabled"]   | config.logFileEnabled;
+    config.atBridgeEnabled  = g["atBridgeEnabled"]  | config.atBridgeEnabled;
     config.pushStrategy     = (PushStrategy)(g["pushStrategy"] | (int)config.pushStrategy);
     if (g["remark"].is<const char*>()) {
       config.remark = String(g["remark"].as<const char*>()).substring(0, 64);

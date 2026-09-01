@@ -1,6 +1,7 @@
 #include "status.h"
 #include "config/config.h"
 #include "sim/sim.h"
+#include "sim/at_bridge.h"
 #include "time/time_sync.h"
 #include <AsyncJson.h>
 #include <ArduinoJson.h>
@@ -33,6 +34,11 @@ void statusController(AsyncWebServerRequest* request) {
   SimState ss = Sim::state();
   root["simState"]      = (int)ss;
   root["simStateLabel"] = simStateLabel(ss);
+
+  // USB AT 透传模式：active() 反映实际运行态，atBridgeEnabled 反映配置态。
+  // 两者不一致说明改了配置但还没重启。
+  root["atBridge"]        = AtBridge::active();
+  root["atBridgeEnabled"] = config.atBridgeEnabled;
 
   resp->setLength();
   request->send(resp);

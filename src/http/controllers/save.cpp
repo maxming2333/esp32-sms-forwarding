@@ -33,6 +33,7 @@ void saveController(AsyncWebServerRequest* request) {
     config.simNotifyEnabled = request->hasParam("simNotifyEnabled", true);
     config.dataTraffic       = request->hasParam("dataTraffic",      true);
     config.logFileEnabled    = request->hasParam("logFileEnabled",   true);
+    config.atBridgeEnabled   = request->hasParam("atBridgeEnabled",  true);
   }
 
   if (request->hasParam("pushStrategy", true)) {

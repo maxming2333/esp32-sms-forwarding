@@ -8,6 +8,7 @@
 #include "logger/logger.h"
 #include "config/config.h"
 #include "sim/sim.h"
+#include "sim/at_bridge.h"
 #include "call/call.h"
 #include "time/time_sync.h"
 #include "sms/sms.h"
@@ -155,9 +156,17 @@ void setup() {
   // sendCommand() 会立即返回 false（提示无响应），不会访问 Serial1，无冲突风险。
   Sim::ensureFreshModemSession();   // 等 AT 就绪 + 保证卡会话是刚复位的干净状态
   esp_task_wdt_reset();
-  Sim::init();
-  esp_task_wdt_reset();
-  Sim::startReaderTask();
+
+  if (config.atBridgeEnabled) {
+    // USB AT 透传模式：不启动 SimDispatcher，固件之后不再访问 Serial1，
+    // 把模组的 AT 接口原样交给 USB 主机（原因详见 sim/at_bridge.h）。
+    LOG("MAIN", "USB AT 透传模式已启用，跳过 SIM 初始化");
+    AtBridge::start();
+  } else {
+    Sim::init();
+    esp_task_wdt_reset();
+    Sim::startReaderTask();
+  }
 
   digitalWrite(LED_BUILTIN, LOW);
   // 开机推送在 loop() 中检测 WifiManager::isInitDone() 上升沿后自动安排
