@@ -1,4 +1,5 @@
 #include "tools.h"
+#include "at_bridge_api.h"
 #include "config/config.h"
 #include "http/body_accumulator.h"
 #include "http/json_response.h"
@@ -62,6 +63,8 @@ void sendSmsController(AsyncWebServerRequest* request) {
 }
 
 void pingController(AsyncWebServerRequest* request) {
+  // Ping 会 pauseReader() 独占 UART 并裸写 Serial1，必然打断桥会话。
+  if (atBridgeSessionActive()) { sendJsonResponse(request, false, "远程 AT 会话进行中，请稍后重试"); return; }
   LOG("HTOOLS", "网页端发起Ping请求");
 
   sendATCommand("AT+CGACT=1,1", 10000);
@@ -319,6 +322,9 @@ void flightModeController(AsyncWebServerRequest* request) {
 }
 
 void atCommandController(AsyncWebServerRequest* request) {
+  // 远程 AT 桥会话期间拒绝网页注入：SIM AKA 的逻辑通道开/APDU/关是粘性序列，
+  // 中间插入一条 CSIM/CGLA 会静默破坏交换结果。
+  if (atBridgeSessionActive()) { sendJsonResponse(request, false, "远程 AT 会话进行中，请稍后重试"); return; }
   String cmd = request->hasParam("cmd") ? request->getParam("cmd")->value() : "";
   if (cmd.length() == 0) { sendJsonResponse(request, false, "错误：指令不能为空"); return; }
 

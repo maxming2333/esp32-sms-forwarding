@@ -9,6 +9,7 @@
 #include "controllers/blacklist.h"
 #include "controllers/ota.h"
 #include "controllers/logs.h"
+#include "controllers/at_bridge_api.h"
 #include "config/config.h"
 #include "../logger/logger.h"
 #include <LittleFS.h>
@@ -83,6 +84,18 @@ void HttpServer::setup(AsyncWebServer& server) {
   server.on("/query",   HTTP_GET,  queryController);
   server.on("/flight",  HTTP_GET,  flightModeController);
   server.on("/at",      HTTP_GET,  atCommandController);
+
+  // 远程 AT 桥（Simplus internal/atremote 的对端）。会话期间 /at 与 /ping 被拒绝，
+  // 以保证 APDU 序列不被网页端插入的命令破坏。契约见 Simplus docs/remote-at-bridge.md。
+  server.on("/at/session", HTTP_POST, atBridgeSessionOpenController);
+  server.on("/at/session", HTTP_DELETE,
+    [](AsyncWebServerRequest* request) {},
+    nullptr,
+    atBridgeSessionCloseController);
+  server.on("/at/command", HTTP_POST,
+    [](AsyncWebServerRequest* request) {},
+    nullptr,
+    atBridgeCommandController);
 
   // Config reset / reboot API
   server.on("/api/tools/reset-token", HTTP_GET, resetTokenController);
