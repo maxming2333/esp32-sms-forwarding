@@ -1,6 +1,7 @@
 #include "call_events.h"
 #include "../logger/logger.h"
 #include <time.h>
+#include <esp_random.h>
 
 namespace {
 
@@ -9,10 +10,13 @@ size_t            s_count    = 0;   // 环内有效条数,上限 CAPACITY
 size_t            s_head     = 0;   // 下一个写入位置
 uint32_t          s_sequence = 0;   // 已产生事件总数,也是最后一条的 sequence
 uint32_t          s_dropped  = 0;
+char              s_bootId[17] = {0};
 
 }  // namespace
 
 void CallEvents::init() {
+  snprintf(s_bootId, sizeof(s_bootId), "%08x%08x",
+           (unsigned)esp_random(), (unsigned)esp_random());
   s_count    = 0;
   s_head     = 0;
   s_sequence = 0;
@@ -63,3 +67,5 @@ size_t CallEvents::since(uint32_t after, Event* out, size_t max) {
 uint32_t CallEvents::latestSequence() { return s_sequence; }
 
 uint32_t CallEvents::dropped() { return s_dropped; }
+
+const char* CallEvents::bootId() { return s_bootId; }

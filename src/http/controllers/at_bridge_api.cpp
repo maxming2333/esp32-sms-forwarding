@@ -389,6 +389,9 @@ void callEventsController(AsyncWebServerRequest* request) {
   JsonObject root = response->getRoot().to<JsonObject>();
   // latestSequence 与 dropped 一起让消费方判断是否漏读:只看 events 数组无法区分
   // 「这段时间没人打来」和「打来了但缓冲已被覆盖」。
+  // bootId 必须先于其余字段被消费方检查:sequence 在重启后归零,消费方记着旧游标
+  // 就会永久读不到任何东西。见 CallEvents::bootId() 的消费方义务说明。
+  root["bootId"]         = CallEvents::bootId();
   root["latestSequence"] = CallEvents::latestSequence();
   root["dropped"]        = CallEvents::dropped();
   root["uptimeMs"]       = (uint32_t)millis();
