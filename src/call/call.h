@@ -6,9 +6,13 @@
 // ESP32-C3 单核 + 全部采用 millis() 超时比较 → 无需显式互斥锁。
 // 业务逻辑：
 //   1) RING 到达 → 记录起始时间，启动 CLIP 等待窗口
-//   2) +CLIP 到达 → 提取号码，取消 CLIP 超时后推送
-//   3) CLIP 超时 → 主动 AT+CLCC 查询底代；仍无果则以 "未知号码" 推送
-//   4) DEDUP_MS 窗口内同号重复来电只推送一次
+//   2) +CLIP 或未经请求的 +CLCC 到达 → 提取号码，取消等待窗口后推送
+//   3) 等待超时 → 主动 AT+CLCC 查询底代；仍无果则以 "未知号码" 推送
+//   4) 通话结束（NO CARRIER 等）→ 立即用已知号码推送，不再等满窗口
+//   5) DEDUP_MS 窗口内同号重复来电只推送一次
+//
+// 实测本模组（ML307A + 中国电信）不发 +CLIP:，而是主动报 +CLCC:，因此第 2 步的
+// +CLCC 分支不是冗余保险，而是这块硬件上唯一的即时号码来源。
 class Call {
 public:
   // 同号码去重窗口（毫秒），避免运营商重拨重复推送。
@@ -25,6 +29,12 @@ public:
 
   // SIM reader 任务检测到 +CLIP URC 时调用。
   static void handleCLIP(const String& line);
+
+  // SIM reader 任务检测到未经请求的 +CLCC URC 时调用。
+  static void handleCLCC(const String& line);
+
+  // SIM reader 任务检测到通话结束上报时调用。
+  static void handleCallEnd(const String& line);
 
   // 每轮 loop() 调用：处理 CLIP 超时、推送派发、AT+CLCC 底代查询。
   static void tick();

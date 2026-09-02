@@ -44,6 +44,18 @@ bool isUrcLine(const String& line) {
     // 识别的话,它在某条命令在途时会被并入该命令的响应,并且来电会彻底丢失 ——
     // 后续的 +CLIP: 虽然能被识别,却因为没有先导 RING 而被丢弃。
     if (line.startsWith("+CRING:"))            return true;
+    // 实测(ML307A + 中国电信):模组**不发** +CLIP:,而是在 RING 之后主动报一条
+    // +CLCC: 1,1,4,0,0,"158…",129,"",0,0。不在此识别有两个后果:主叫号码只能靠
+    // 3 秒后主动查询 AT+CLCC 拿到(短促来电会拿不到),更要紧的是它若在某条命令
+    // 在途时到达,会被并入该命令的响应 —— 一通来电就能污染 AT+CMGL 的短信列举。
+    // 本固件自己发的 AT+CLCC 不受影响:solicitedInfoLine() 会把它认作该命令的
+    // 信息响应而不是主动上报。
+    if (line.startsWith("+CLCC:"))             return true;
+    // 通话结束上报。本固件从不拨号也不挂机(全仓无 ATD/ATA/ATH/AT+CHUP),所以这
+    // 三行只可能是未经请求的,不会是任何命令的最终结果码,并入响应只会造成污染。
+    if (line.equals("NO CARRIER"))             return true;
+    if (line.equals("BUSY"))                   return true;
+    if (line.equals("NO ANSWER"))              return true;
     if (line.startsWith("+CLIP:"))             return true;
     if (line.startsWith("+CMT:"))              return true;
     // 瘦模式下短信落存储并给出 +CMTI: 指示。必须在此识别为主动上报：否则它在
@@ -139,6 +151,14 @@ void routeURC(const String& line) {
     }
     if (line.startsWith("+CUSD:")) {
         s_urcCb(SimUrcType::CUSD, line);
+        return;
+    }
+    if (line.startsWith("+CLCC:")) {
+        s_urcCb(SimUrcType::CLCC, line);
+        return;
+    }
+    if (line.equals("NO CARRIER") || line.equals("BUSY") || line.equals("NO ANSWER")) {
+        s_urcCb(SimUrcType::CALL_END, line);
         return;
     }
     // 走到这里说明模组主动报了一条我们不认识的东西。此前是无声丢弃:模组说了话、

@@ -68,6 +68,8 @@ enum class SimUrcType : uint8_t {
   CUSD       = 6,    // USSD 应答
   CMTI       = 7,    // 新短信已入存储的指示（瘦模式；本固件不消费，仅记录）
   MATREADY   = 8,    // 模组自身重启完成、AT 接口就绪
+  CLCC       = 9,    // 来电详情。实测本模组用未经请求的 +CLCC: 代替 +CLIP: 上报主叫
+  CALL_END   = 10,   // 通话结束（NO CARRIER / BUSY / NO ANSWER）
 };
 
 // URC 回调签名：dispatcher 在 Reader Task 上下文回调

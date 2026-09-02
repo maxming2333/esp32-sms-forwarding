@@ -811,6 +811,9 @@ static void onUrc(SimUrcType type, const String& line) {
   switch (type) {
     case SimUrcType::RING:       Call::handleRING();          break;
     case SimUrcType::CLIP:       Call::handleCLIP(line);      break;
+    // 本模组用未经请求的 +CLCC: 代替 +CLIP: 报主叫,所以两条都要接。
+    case SimUrcType::CLCC:       Call::handleCLCC(line);      break;
+    case SimUrcType::CALL_END:   Call::handleCallEnd(line);   break;
     // 瘦模式下短信本应落入存储由外部系统取走。走到 +CMT: 说明模组绕过了存储直接
     // 投递 —— class 0(即显短信)语义是「立即显示、别存」,部分模组会无视 CNMI 的
     // mt=1 这么做。这条消息外部系统**永远看不到**,而且此前没有任何痕迹:两侧日志

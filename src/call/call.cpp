@@ -84,6 +84,44 @@ void Call::handleCLIP(const String& line) {
   s_dispatchPending = true;
 }
 
+// handleCLCC 接收未经请求的 +CLCC:。
+//
+// 实测本模组不发 +CLIP:,而是在 RING 之后主动报一条 +CLCC:,所以这里是这块硬件上
+// 唯一的即时号码来源 —— 没有它就只能等 3 秒后自己去查,短促来电会查空。
+void Call::handleCLCC(const String& line) {
+  String num = parseCLCC(line);
+  if (num.length() == 0) {
+    return;
+  }
+  // 与 handleCLIP 同样的去抖:模组每个响铃周期都会重发,一通电话不能变成好几条。
+  if (!s_pending) {
+    if (millis() - s_lastNotifyMs < DEDUP_MS) {
+      return;
+    }
+    s_callerNumber    = num;
+    s_dispatchPending = true;
+    LOG("CALL", "收到主动 +CLCC 但此前无 RING，按来电处理，号码: %s", num.c_str());
+    return;
+  }
+  s_callerNumber    = num;
+  s_pending         = false;
+  s_dispatchPending = true;
+  LOG("CALL", "从主动 +CLCC 获取来电号码: %s", num.c_str());
+}
+
+// handleCallEnd 在通话结束上报到达时收口。
+//
+// 没有它,一通两秒就挂断的来电要等满 10 秒窗口才被记录 —— 号码其实早就拿到了。
+// 已经有号码就立即派发;没有的话也不再等,主叫方已经走了,再等也不会有 +CLCC。
+void Call::handleCallEnd(const String& line) {
+  if (!s_pending) {
+    return;
+  }
+  s_pending         = false;
+  s_dispatchPending = true;
+  LOG("CALL", "通话结束（%s），立即以已知号码派发: %s", line.c_str(), s_callerNumber.c_str());
+}
+
 String Call::parseCLCC(const String& resp) {
   int pos = 0;
   while (true) {
