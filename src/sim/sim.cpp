@@ -811,7 +811,20 @@ static void onUrc(SimUrcType type, const String& line) {
   switch (type) {
     case SimUrcType::RING:       Call::handleRING();          break;
     case SimUrcType::CLIP:       Call::handleCLIP(line);      break;
-    case SimUrcType::CMT:        Sms::handleCMTHeader();      break;
+    // 瘦模式下短信本应落入存储由外部系统取走。走到 +CMT: 说明模组绕过了存储直接
+    // 投递 —— class 0(即显短信)语义是「立即显示、别存」,部分模组会无视 CNMI 的
+    // mt=1 这么做。这条消息外部系统**永远看不到**,而且此前没有任何痕迹:两侧日志
+    // 都正常,唯一症状是「固件推送到了但 Simplus 里没有」。
+    //
+    // 仍然消费它:交给固件推送好过彻底丢失 —— 外部系统本来就拿不到。但必须留下
+    // 记录,把不可见变可见。
+    case SimUrcType::CMT:
+      if (config.thinModeEnabled) {
+        LOG("SIM", "⚠ 瘦模式下收到直投短信(+CMT:),模组绕过了存储 —— 外部系统"
+                   "无法获取此条,已交由本固件推送。若频繁出现,该发送方可能使用 class 0");
+      }
+      Sms::handleCMTHeader();
+      break;
     case SimUrcType::CMT_PDU:    Sms::handlePDU(line);        break;
     case SimUrcType::CUSD:       Sms::handleUSSD(line);       break;
     case SimUrcType::CPIN_READY: Sim::handleURC(line);        break;
