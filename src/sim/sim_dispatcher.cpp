@@ -39,6 +39,11 @@ bool isFinalErrorLine(const String& line) {
 
 bool isUrcLine(const String& line) {
     if (line.equals("RING"))                   return true;
+    // AT+CRC=1 会把来电指示从裸 RING 换成 +CRING: <type>(TS 27.007 §6.11)。这个
+    // 设置和 CNMI 一样不进模组 NVM,模组自己重启后可能不是我们下发的那个值;不在此
+    // 识别的话,它在某条命令在途时会被并入该命令的响应,并且来电会彻底丢失 ——
+    // 后续的 +CLIP: 虽然能被识别,却因为没有先导 RING 而被丢弃。
+    if (line.startsWith("+CRING:"))            return true;
     if (line.startsWith("+CLIP:"))             return true;
     if (line.startsWith("+CMT:"))              return true;
     // 瘦模式下短信落存储并给出 +CMTI: 指示。必须在此识别为主动上报：否则它在
@@ -98,7 +103,7 @@ bool solicitedInfoLine(const SimCmdSlot* slot, const String& line) {
 void routeURC(const String& line) {
     if (s_urcCb == nullptr) return;
 
-    if (line.equals("RING")) {
+    if (line.equals("RING") || line.startsWith("+CRING:")) {
         s_urcCb(SimUrcType::RING, line);
         return;
     }
@@ -136,6 +141,13 @@ void routeURC(const String& line) {
         s_urcCb(SimUrcType::CUSD, line);
         return;
     }
+    // 走到这里说明模组主动报了一条我们不认识的东西。此前是无声丢弃:模组说了话、
+    // 固件什么都没做、日志里一个字都没有,唯一症状是「某类通知从来不出现」,而两侧
+    // 看起来都正常 —— 与 +CMT: 那处注释描述的是同一类故障。
+    //
+    // 空闲时每一行都会走到这里(不经过 isUrcLine),所以这条日志也是唯一能看见
+    // 「模组究竟发了什么」的地方。
+    LOG("SIMDSP", "[URC-unrecognized] %s", line.c_str());
 }
 
 void appendResponseLine(SimCmdSlot* slot, const String& line) {

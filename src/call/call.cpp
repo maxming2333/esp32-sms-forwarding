@@ -54,13 +54,30 @@ void Call::handleRING() {
 }
 
 void Call::handleCLIP(const String& line) {
-  if (!s_pending) {
-    return;
-  }
+  String num;
   int q1 = line.indexOf('"');
   int q2 = (q1 >= 0) ? line.indexOf('"', q1 + 1) : -1;
   if (q1 >= 0 && q2 > q1) {
-    String num = line.substring(q1 + 1, q2);
+    num = line.substring(q1 + 1, q2);
+  }
+
+  // +CLIP: 在没有先导 RING 时曾被整条丢弃,于是一次响铃指示没被认出就丢掉整通来电。
+  // 而 +CLIP: 本身已经带齐了一条通知需要的全部信息(谁、什么时候),所以这里把它
+  // 当作来电本身,而不是丢掉。
+  //
+  // 模组每个响铃周期都会重发 RING 与 +CLIP:,所以必须套用与 RING 相同的去抖窗口,
+  // 否则一通电话会变成好几条记录。
+  if (!s_pending) {
+    if (millis() - s_lastNotifyMs < DEDUP_MS) {
+      return;
+    }
+    s_callerNumber    = num.length() > 0 ? num : String("号码保密");
+    s_dispatchPending = true;
+    LOG("CALL", "收到 +CLIP 但此前无 RING，按来电处理，号码: %s", s_callerNumber.c_str());
+    return;
+  }
+
+  if (num.length() > 0 || s_callerNumber.length() == 0) {
     s_callerNumber = num.length() > 0 ? num : String("号码保密");
   }
   s_pending         = false;
