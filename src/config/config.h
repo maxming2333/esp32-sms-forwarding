@@ -73,6 +73,15 @@ struct Config {
   // USB AT 透传模式：开机时不启动 SimDispatcher，把模组 AT 接口原样交给 USB 主机。
   // 开启后设备不再接收短信与来电，仅作为 USB AT 通道，改动后需重启生效。
   bool         atBridgeEnabled;
+
+  // 短信消费归属（「胖/瘦模式」）。
+  //   false = 胖模式：AT+CNMI=2,2，新短信作为 +CMT: URC 直投本固件，由本固件
+  //           解析并走推送通道。短信**不进模组存储**。
+  //   true  = 瘦模式：AT+CNMI=2,1，新短信落入模组/SIM 存储并只给一条 +CMTI:
+  //           指示。本固件不消费，交由外部系统（如 Simplus）轮询取走并删除。
+  // 二者互斥：同一条短信只能有一个消费者，否则会出现「有时进推送、有时进外部
+  // 系统」这种最难排查的状态。
+  bool         thinModeEnabled;
   WifiEntry    wifiList[MAX_WIFI_ENTRIES];
   int          wifiCount;
   String       blacklist[MAX_BLACKLIST_ENTRIES];

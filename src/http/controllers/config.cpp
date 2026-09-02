@@ -20,6 +20,7 @@ void configController(AsyncWebServerRequest* request) {
   root["dataTraffic"]      = config.dataTraffic;
   root["logFileEnabled"]   = config.logFileEnabled;
   root["atBridgeEnabled"]  = config.atBridgeEnabled;
+  root["thinModeEnabled"]  = config.thinModeEnabled;
 
   root["pushStrategy"] = (int)config.pushStrategy;
   root["pushCount"]    = config.pushCount;

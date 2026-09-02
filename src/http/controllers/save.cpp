@@ -34,6 +34,7 @@ void saveController(AsyncWebServerRequest* request) {
     config.dataTraffic       = request->hasParam("dataTraffic",      true);
     config.logFileEnabled    = request->hasParam("logFileEnabled",   true);
     config.atBridgeEnabled   = request->hasParam("atBridgeEnabled",  true);
+    config.thinModeEnabled   = request->hasParam("thinModeEnabled",  true);
   }
 
   if (request->hasParam("pushStrategy", true)) {

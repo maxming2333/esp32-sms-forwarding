@@ -488,7 +488,13 @@ static bool runModemConfig() {
   // 会从 15 退回 19），因此必须放在每次初始化都会执行的路径里。
   runInitStep("AT+CGDCONT=1,\"IP\",\"\"", 1000, 2, "默认PDP上下文(空APN)");
 
-  if (!runInitStep("AT+CNMI=2,2,0,0,0", 1000, 3, "CNMI")) return false;
+  // 短信消费归属由「胖/瘦模式」决定，见 Config::thinModeEnabled。
+  //   胖模式 CNMI=2,2：新短信直投 TE 成为 +CMT: URC，**不进模组存储**，由本固件
+  //                    解析并推送。此模式下外部系统的 AT+CMGL 永远是空的。
+  //   瘦模式 CNMI=2,1：新短信落入存储，只给一条 +CMTI: 指示。本固件不消费，
+  //                    外部系统轮询 CMGL/CMGR 取走并 CMGD 删除。
+  const char* cnmi = config.thinModeEnabled ? "AT+CNMI=2,1,0,0,0" : "AT+CNMI=2,2,0,0,0";
+  if (!runInitStep(cnmi, 1000, 3, "CNMI")) return false;
   if (!runInitStep("AT+CMGF=0", 1000, 3, "CMGF")) return false;
   runInitStep("AT+CLIP=1", 1000, 3, "CLIP");   // 启用主叫号码上报，失败不阻断初始化
   runInitStep("AT+CUSD=1", 1000, 3, "CUSD");   // 启用 USSD 主动上报，失败不阻断初始化
@@ -809,6 +815,11 @@ static void onUrc(SimUrcType type, const String& line) {
     case SimUrcType::CMT_PDU:    Sms::handlePDU(line);        break;
     case SimUrcType::CUSD:       Sms::handleUSSD(line);       break;
     case SimUrcType::CPIN_READY: Sim::handleURC(line);        break;
+    // 瘦模式：短信已入存储，消费方是外部系统。这里只留一条记录便于排查，
+    // 绝不读取或删除——两个消费者会导致短信随机丢向其中一方。
+    case SimUrcType::CMTI:
+      LOG("SIM", "瘦模式：新短信已入模组存储（%s），等待外部系统取走", line.c_str());
+      break;
     case SimUrcType::SIM_REMOVE: Sim::handleURC(line);        break;
     default:                                                 break;
   }

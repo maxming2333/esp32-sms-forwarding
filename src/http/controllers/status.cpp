@@ -39,6 +39,8 @@ void statusController(AsyncWebServerRequest* request) {
   // 两者不一致说明改了配置但还没重启。
   root["atBridge"]        = AtBridge::active();
   root["atBridgeEnabled"] = config.atBridgeEnabled;
+  // 短信消费归属：瘦模式下本固件不消费入站短信，交由外部系统轮询取走。
+  root["thinMode"]        = config.thinModeEnabled;
 
   resp->setLength();
   request->send(resp);

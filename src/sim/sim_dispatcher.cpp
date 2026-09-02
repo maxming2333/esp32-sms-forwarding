@@ -41,6 +41,9 @@ bool isUrcLine(const String& line) {
     if (line.equals("RING"))                   return true;
     if (line.startsWith("+CLIP:"))             return true;
     if (line.startsWith("+CMT:"))              return true;
+    // 瘦模式下短信落存储并给出 +CMTI: 指示。必须在此识别为主动上报：否则它在
+    // 某条命令在途时会被并入该命令的响应，直接污染 AT+CMGL 等结果。
+    if (line.startsWith("+CMTI:"))             return true;
     if (s_waitingPdu)                          return true;
     if (line.indexOf("+CPIN:") >= 0)           return true;
     if (line.startsWith("+SIMCARD:"))          return true;
@@ -93,6 +96,10 @@ void routeURC(const String& line) {
 
     if (line.equals("RING")) {
         s_urcCb(SimUrcType::RING, line);
+        return;
+    }
+    if (line.startsWith("+CMTI:")) {
+        s_urcCb(SimUrcType::CMTI, line);
         return;
     }
     if (line.startsWith("+CLIP:")) {

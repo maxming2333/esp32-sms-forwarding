@@ -575,6 +575,22 @@
               <label>
                 <input
                   type="checkbox"
+                  name="thinModeEnabled"
+                  id="thinModeEnabled"
+                />
+                瘦模式（短信交给外部系统消费，本设备不再解析和推送短信）
+              </label>
+              <p class="hint">
+                默认为<b>胖模式</b>：新短信直投本固件（<code>CNMI=2,2</code>），由本设备解析并走推送通道，短信<b>不进模组存储</b>。<br />
+                开启<b>瘦模式</b>后改为 <code>CNMI=2,1</code>：新短信落入模组/SIM 存储，本设备只记录一条日志、<b>不消费</b>，由外部系统（如 Simplus）通过远程 AT 桥轮询取走并删除。<br />
+                ⚠️ 两种模式<b>互斥</b>——同一条短信只能有一个消费者，否则会出现「有时进推送、有时进外部系统」这种最难排查的状态。<b>保存后需重启才生效</b>。<br />
+                ⚠️ 瘦模式下如果外部系统没在取，短信会堆积在存储里（容量通常 30 条），满了之后新短信会被网络重投或丢弃。
+              </p>
+            </div>
+            <div class="form-group">
+              <label>
+                <input
+                  type="checkbox"
                   name="atBridgeEnabled"
                   id="atBridgeEnabled"
                 />
@@ -1144,6 +1160,8 @@
           !!data.logFileEnabled;
         document.getElementById("atBridgeEnabled").checked =
           !!data.atBridgeEnabled;
+        document.getElementById("thinModeEnabled").checked =
+          !!data.thinModeEnabled;
 
         var channels = data.pushChannels || [];
         g_pushChannels = [];
