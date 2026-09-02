@@ -48,6 +48,7 @@ enum class SimUrcType : uint8_t {
   SIM_REMOVE = 5,    // SIM 卡拔出
   CUSD       = 6,    // USSD 应答
   CMTI       = 7,    // 新短信已入存储的指示（瘦模式；本固件不消费，仅记录）
+  MATREADY   = 8,    // 模组自身重启完成、AT 接口就绪
 };
 
 // URC 回调签名：dispatcher 在 Reader Task 上下文回调

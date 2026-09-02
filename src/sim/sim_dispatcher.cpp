@@ -48,6 +48,10 @@ bool isUrcLine(const String& line) {
     if (line.indexOf("+CPIN:") >= 0)           return true;
     if (line.startsWith("+SIMCARD:"))          return true;
     if (line.startsWith("+CUSD:"))             return true;
+    // 模组自身重启后的就绪上报。它没有冒号，也不对应任何被下发的命令，因此如果
+    // 不在此识别，就会在某条命令在途时被并入该命令的响应并使其解析失败——实测
+    // 表现为 AT+CPMS? 返回 "+MATREADY\n+CPMS: ..."，上层直接判为非法响应。
+    if (line.startsWith("+MATREADY"))           return true;
     return false;
 }
 
@@ -100,6 +104,10 @@ void routeURC(const String& line) {
     }
     if (line.startsWith("+CMTI:")) {
         s_urcCb(SimUrcType::CMTI, line);
+        return;
+    }
+    if (line.startsWith("+MATREADY")) {
+        s_urcCb(SimUrcType::MATREADY, line);
         return;
     }
     if (line.startsWith("+CLIP:")) {

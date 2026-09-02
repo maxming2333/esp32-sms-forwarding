@@ -820,6 +820,13 @@ static void onUrc(SimUrcType type, const String& line) {
     case SimUrcType::CMTI:
       LOG("SIM", "瘦模式：新短信已入模组存储（%s），等待外部系统取走", line.c_str());
       break;
+    // 模组自己重启了。CNMI / CMGF / CGDCONT 等都不写入模组 NVM，重启即丢失：
+    // 若不重新下发，瘦模式会静默退回默认上报方式，外部系统再也收不到短信，而两侧
+    // 日志都正常。复用热插入重新初始化路径（不能在 reader task 上下文里发 AT）。
+    case SimUrcType::MATREADY:
+      LOG("SIM", "检测到模组重启（%s），将重新下发模组配置", line.c_str());
+      s_needReinit = true;
+      break;
     case SimUrcType::SIM_REMOVE: Sim::handleURC(line);        break;
     default:                                                 break;
   }
