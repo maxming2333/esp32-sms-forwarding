@@ -101,6 +101,18 @@ public:
                             String* outResp = nullptr, bool prio = false,
                             size_t respCap = SIM_RESP_BUF_SIZE);
 
+  // 在 reader 暂停期间,把裸读到的一行交给 URC 识别与路由;是主动上报则返回 true,
+  // 调用方不应把它计入命令响应。
+  //
+  // 为什么必须有这个:pauseReader() 期间任何 RING / +CLIP / +CMTI 都落在调用方的
+  // 裸读循环里,不转交就被当成响应字节吞掉并丢弃 —— 出站短信最长占用 30s,这段时间
+  // 来的电话推送会直接消失。
+  //
+  // 安全前提:回调在调用方(async_tcp)上下文执行,因此所有 URC handler 都不得发送
+  // AT 命令 —— reader 正停着,sendCommand 会永久阻塞。现有 handler 均只置标志位或
+  // 入队(来电的 AT+CLCC 是延迟到 tick 里发的),满足该前提。新增 handler 必须保持。
+  static bool   routeIfUrc(const String& line);
+
   // 暂停 Reader Task，调用方可直接 Serial1.read/write（必须配对 resumeReader）。
   // 返回 false 表示在 timeoutMs 内未能确认 Reader Task 让出 UART。
   static bool   pauseReader(unsigned long timeoutMs = 10000);

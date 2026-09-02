@@ -276,9 +276,12 @@ void atBridgeExchangeController(AsyncWebServerRequest* request, uint8_t* data,
   while (Serial1.available()) Serial1.read();
   Serial1.println(command);
 
+  // 按行读取而不是按字节累积:reader 正停着,期间到达的 RING / +CLIP / +CMTI 必须
+  // 转交给 URC 路由,否则会被当成响应字节吞掉。出站短信最长占用 30s,不转交就意味着
+  // 这段时间来的电话推送直接消失。
   unsigned long start = millis();
   bool gotPrompt = false, earlyTerminal = false;
-  String pre;
+  String lineBuf;
   while (millis() - start < BRIDGE_PROMPT_TIMEOUT_MS) {
     esp_task_wdt_reset();
     if (!Serial1.available()) {
@@ -287,11 +290,21 @@ void atBridgeExchangeController(AsyncWebServerRequest* request, uint8_t* data,
       continue;
     }
     char c = Serial1.read();
+    // 提示符不带换行,必须在成行之前就识别。
     if (c == '>') { gotPrompt = true; break; }
-    pre += c;
-    if (pre.length() > 256) pre.remove(0, pre.length() - 256);
+    if (c == '\r') continue;
+    if (c != '\n') {
+      lineBuf += c;
+      if (lineBuf.length() > SIM_LINE_BUF_MAX) lineBuf = "";
+      continue;
+    }
+    String line = lineBuf;
+    lineBuf = "";
+    line.trim();
+    if (line.length() == 0) continue;
+    if (SimDispatcher::routeIfUrc(line)) continue;
     // 模组在提示符之前就给出终止状态 = 命令被拒，载荷从未被邀请写入。
-    if (pre.indexOf("ERROR") >= 0) { earlyTerminal = true; break; }
+    if (line.indexOf("ERROR") >= 0) { earlyTerminal = true; break; }
   }
   if (!gotPrompt) {
     SimDispatcher::resumeReader();
@@ -308,14 +321,32 @@ void atBridgeExchangeController(AsyncWebServerRequest* request, uint8_t* data,
   start = millis();
   String raw;
   bool terminal = false;
+  lineBuf = "";
   while (millis() - start < timeoutMs) {
     esp_task_wdt_reset();
     if (!Serial1.available()) { delay(5); continue; }
-    while (Serial1.available()) {
-      raw += (char)Serial1.read();
-      if (raw.length() > 1024) raw.remove(0, raw.length() - 1024);
+    char c = Serial1.read();
+    if (c == '\r') continue;
+    if (c != '\n') {
+      lineBuf += c;
+      if (lineBuf.length() > SIM_LINE_BUF_MAX) lineBuf = "";
+      continue;
     }
-    if (raw.indexOf("\nOK") >= 0 || raw.indexOf("ERROR") >= 0) { terminal = true; break; }
+    String line = lineBuf;
+    lineBuf = "";
+    line.trim();
+    if (line.length() == 0) continue;
+    if (SimDispatcher::routeIfUrc(line)) continue;
+    raw += line;
+    raw += '\n';
+    if (raw.length() > SIM_RESP_LARGE_BUF_SIZE) { raw.remove(SIM_RESP_LARGE_BUF_SIZE); break; }
+    // 按行判定终止状态,而不是在累积缓冲里搜子串:后者会把出现在 PDU 十六进制里的
+    // 字面量误判为终止,也无法区分主动上报里的 ERROR。
+    if (line == "OK" || line == "ERROR" ||
+        line.startsWith("+CME ERROR") || line.startsWith("+CMS ERROR")) {
+      terminal = true;
+      break;
+    }
   }
   SimDispatcher::resumeReader();
   renewSession();

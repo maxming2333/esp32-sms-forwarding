@@ -395,6 +395,14 @@ void SimDispatcher::resumeReader() {
     }
 }
 
+bool SimDispatcher::routeIfUrc(const String& line) {
+    if (line.length() == 0) return false;
+    if (!isUrcLine(line)) return false;
+    LOG("SIMDSP", "[URC-during-raw] %s", line.c_str());
+    routeURC(line);
+    return true;
+}
+
 bool SimDispatcher::running() {
     return s_queue != nullptr;
 }
