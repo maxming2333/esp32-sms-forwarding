@@ -23,6 +23,17 @@ constexpr UBaseType_t  SIM_READER_TASK_PRIORITY  = 3;
 // 直接拒绝、长响应行被丢弃，因此三者一起放大并留出余量。
 constexpr size_t        SIM_CMD_BUF_SIZE           = 576;
 constexpr size_t        SIM_RESP_BUF_SIZE          = 640;
+
+// 大响应容量上限。用途:AT+CMGL 全量列举短信存储。
+//
+// 一条 160 字符 GSM7 短信的 TPDU 约 152 字节 → 304 个 hex 字符,加 SMSC 与
+// "+CMGL: n,s,,len" 头行约 340 字节;SIM 的 EF_SMS 常见 40 槽,满载约 13.6KB。
+// 默认的 640 字节在**攒到 2 条正常长度短信**时就会截断,而截断会破坏整个转录
+// (最后一行不完整、拿不到终止状态),上层判为非法响应并拒绝整批 —— 于是既读不
+// 出来也排空不掉,只会越攒越死。
+//
+// 24KB 给 40 槽满载留了近一倍余量。
+constexpr size_t        SIM_RESP_LARGE_BUF_SIZE    = 24576;
 constexpr size_t        SIM_LINE_BUF_MAX           = 768;
 constexpr unsigned long SIM_TIMEOUT_DRAIN_QUIET_MS = 300;
 
@@ -32,10 +43,18 @@ constexpr unsigned long SIM_TIMEOUT_DRAIN_QUIET_MS = 300;
 struct SimCmdSlot {
   char              cmd[SIM_CMD_BUF_SIZE];        // AT 命令字符串
   unsigned long     timeoutMs;                    // 超时时间
-  char              respBuf[SIM_RESP_BUF_SIZE];   // 响应缓冲（截断时保留前 N-1 字节）
+  // 响应缓冲单独堆分配,容量由调用方按命令指定（截断时保留前 respCap-1 字节）。
+  // 不做成固定大数组:队列深 16,若每槽都带 24KB 缓冲最坏情况要 380KB+，直接耗尽
+  // RAM。只有全量列举这类命令需要大缓冲,其余仍用 640 字节。
+  char*             respBuf;
+  size_t            respCap;
   SemaphoreHandle_t doneSem;                      // 完成信号量（Reader Task → 调用方）
   bool              isOk;                         // OK / ERROR
   bool              priority;                     // 优先命令（插队到队头）
+
+  // 析构里释放响应缓冲,这样现有的每一条 `delete slot` 路径都自动正确,不需要在
+  // 四个错误分支里各加一次 free。
+  ~SimCmdSlot() { delete[] respBuf; }
 };
 
 // URC 类型枚举（dispatcher 只做最小解析，业务字段交回上层）
@@ -76,8 +95,11 @@ public:
   // 返回 true 表示 OK；false 表示 ERROR/超时/队列满。start() 之前调用必失败。
   // - outResp：可选输出，截取到 respBuf 容量内的响应文本（含状态行）
   // - prio：true 时插入队头，用于关键控制命令
+  // respCap:响应缓冲容量,默认 SIM_RESP_BUF_SIZE。需要容纳全量短信列举等大响应
+  // 时传 SIM_RESP_LARGE_BUF_SIZE;截断会破坏整个转录,因此宁可多分配也不要截断。
   static bool   sendCommand(const char* cmd, unsigned long timeoutMs,
-                            String* outResp = nullptr, bool prio = false);
+                            String* outResp = nullptr, bool prio = false,
+                            size_t respCap = SIM_RESP_BUF_SIZE);
 
   // 暂停 Reader Task，调用方可直接 Serial1.read/write（必须配对 resumeReader）。
   // 返回 false 表示在 timeoutMs 内未能确认 Reader Task 让出 UART。

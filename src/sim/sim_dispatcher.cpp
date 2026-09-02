@@ -139,7 +139,8 @@ void routeURC(const String& line) {
 }
 
 void appendResponseLine(SimCmdSlot* slot, const String& line) {
-    size_t existing = strnlen(slot->respBuf, SIM_RESP_BUF_SIZE);
+    if (slot->respBuf == nullptr || slot->respCap == 0) return;
+    size_t existing = strnlen(slot->respBuf, slot->respCap);
     if (existing >= SIM_RESP_BUF_SIZE - 1) return;
 
     size_t remaining = (SIM_RESP_BUF_SIZE - 1) - existing;
@@ -274,7 +275,7 @@ void SimDispatcher::start() {
 }
 
 bool SimDispatcher::sendCommand(const char* cmd, unsigned long timeoutMs,
-                    String* outResp, bool prio) {
+                    String* outResp, bool prio, size_t respCap) {
     if (s_queue == nullptr) return false;
     if (cmd == nullptr) return false;
 
@@ -288,11 +289,21 @@ bool SimDispatcher::sendCommand(const char* cmd, unsigned long timeoutMs,
 
     // 堆分配：缓冲放大到能容纳完整 APDU 后 SimCmdSlot 约 1.2KB，
     // 继续放在调用方栈上会给 async_tcp / loopTask 带来近 1KB 的额外栈压力。
+    if (respCap < SIM_RESP_BUF_SIZE) respCap = SIM_RESP_BUF_SIZE;
+    if (respCap > SIM_RESP_LARGE_BUF_SIZE) respCap = SIM_RESP_LARGE_BUF_SIZE;
+
     SimCmdSlot* slot = new (std::nothrow) SimCmdSlot();
     if (slot == nullptr) {
         LOG("SIMDSP", "AT 指令槽分配失败（堆不足）: %.64s", cmd);
         return false;
     }
+    slot->respBuf = new (std::nothrow) char[respCap];
+    if (slot->respBuf == nullptr) {
+        LOG("SIMDSP", "AT 响应缓冲分配失败（需要 %u 字节）: %.64s", (unsigned)respCap, cmd);
+        delete slot;
+        return false;
+    }
+    slot->respCap = respCap;
 
     memcpy(slot->cmd, cmd, cmdLen);
     slot->cmd[cmdLen] = '\0';

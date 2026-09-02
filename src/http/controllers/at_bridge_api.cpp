@@ -132,7 +132,10 @@ void atBridgeCommandController(AsyncWebServerRequest* request, uint8_t* data,
   // 只靠调用前的续期会让长命令一结束就撞上过期。
   renewSession();
   String raw;
-  SimDispatcher::sendCommand(command.c_str(), static_cast<uint32_t>(timeoutMs), &raw, false);
+  // 用大响应容量:对端会发 AT+CMGL 全量列举短信存储,默认 640 字节在攒到 2 条正常
+  // 长度短信时就截断,而截断会破坏整个转录并让对端拒绝整批 —— 既读不出也排空不掉。
+  SimDispatcher::sendCommand(command.c_str(), static_cast<uint32_t>(timeoutMs), &raw, false,
+                             SIM_RESP_LARGE_BUF_SIZE);
   renewSession();
 
   if (raw.length() == 0) {
