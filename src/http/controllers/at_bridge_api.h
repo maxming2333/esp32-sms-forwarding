@@ -34,3 +34,9 @@ void atBridgeSessionCloseController(AsyncWebServerRequest* request, uint8_t* dat
 
 // 当前是否有未过期的桥会话。网页调试入口据此拒绝插入 AT 命令。
 bool atBridgeSessionActive();
+
+// GET /events/calls?after=<seq>&limit=<n> —— 取出外部系统尚未读到的来电事件。
+//
+// 这不是 AT 中继:来电是纯实时上报,模组和 SIM 里没有任何存储,所以桥必须自己缓冲。
+// 短信可以靠轮询模组存储补取,来电不行——这是外部系统能感知来电的唯一途径。
+void callEventsController(AsyncWebServerRequest* request);

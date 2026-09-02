@@ -2,6 +2,7 @@
 #include "push/push.h"
 #include "sms/phone_utils.h"
 #include "sim/sim_dispatcher.h"
+#include "call_events.h"
 #include "time/time_sync.h"
 #include "../logger/logger.h"
 
@@ -18,6 +19,9 @@ void Call::dispatch(const String& callerNum) {
     LOG("CALL", "黑名单拦截来电，号码: %s", callerNum.c_str());
     return;
   }
+  // 记录在推送之前、黑名单之后:与固件自身的推送严格同源,不会出现「推送了但外部
+  // 系统查不到」或反之。黑名单拦截的来电两边都不出现。
+  CallEvents::record(callerNum);
   String ts = TimeSync::dateStr();
   Push::send(callerNum, "来电号码: " + callerNum + "\n时间: " + ts, ts, MsgTypeInfo(MSG_TYPE_CALL));
   s_lastNotifyMs = millis();
@@ -25,6 +29,7 @@ void Call::dispatch(const String& callerNum) {
 }
 
 void Call::init() {
+  CallEvents::init();
   s_pending         = false;
   s_dispatchPending = false;
   s_callerNumber    = "未知号码";

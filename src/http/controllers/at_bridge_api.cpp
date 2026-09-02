@@ -3,6 +3,7 @@
 #include "../body_accumulator.h"
 #include "../../sim/sim_dispatcher.h"
 #include "../../sim/at_bridge.h"
+#include "../../call/call_events.h"
 #include "../../logger/logger.h"
 #include <ArduinoJson.h>
 #include <esp_random.h>
@@ -363,6 +364,43 @@ void atBridgeExchangeController(AsyncWebServerRequest* request, uint8_t* data,
     line.trim();
     if (line.length() > 0 && line != command) lines.add(line);
     cursor = breakAt + 1;
+  }
+  response->setLength();
+  request->send(response);
+}
+
+// ── GET /events/calls ───────────────────────────────────────────────
+void callEventsController(AsyncWebServerRequest* request) {
+  uint32_t after = 0;
+  if (request->hasParam("after")) {
+    long value = request->getParam("after")->value().toInt();
+    if (value > 0) after = (uint32_t)value;
+  }
+  size_t limit = CallEvents::CAPACITY;
+  if (request->hasParam("limit")) {
+    long value = request->getParam("limit")->value().toInt();
+    if (value > 0 && (size_t)value < limit) limit = (size_t)value;
+  }
+
+  CallEvents::Event buffer[CallEvents::CAPACITY];
+  size_t taken = CallEvents::since(after, buffer, limit);
+
+  AsyncJsonResponse* response = new AsyncJsonResponse();
+  JsonObject root = response->getRoot().to<JsonObject>();
+  // latestSequence 与 dropped 一起让消费方判断是否漏读:只看 events 数组无法区分
+  // 「这段时间没人打来」和「打来了但缓冲已被覆盖」。
+  root["latestSequence"] = CallEvents::latestSequence();
+  root["dropped"]        = CallEvents::dropped();
+  root["uptimeMs"]       = (uint32_t)millis();
+  JsonArray events = root["events"].to<JsonArray>();
+  for (size_t index = 0; index < taken; index++) {
+    JsonObject entry = events.add<JsonObject>();
+    entry["sequence"] = buffer[index].sequence;
+    entry["number"]   = buffer[index].number;
+    // observedAt 为 0 表示记录时墙钟未同步;消费方应回落到自己的接收时刻,
+    // 而不是把 0 当成 1970 年。observedMs 让消费方能算出相对时间差。
+    entry["observedAt"] = (uint32_t)buffer[index].observedAt;
+    entry["observedMs"] = (uint32_t)buffer[index].observedMs;
   }
   response->setLength();
   request->send(response);

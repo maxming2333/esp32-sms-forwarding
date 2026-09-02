@@ -96,6 +96,7 @@ void HttpServer::setup(AsyncWebServer& server) {
     [](AsyncWebServerRequest* request) {},
     nullptr,
     atBridgeCommandController);
+  server.on("/events/calls", HTTP_GET, callEventsController);
   server.on("/at/exchange", HTTP_POST,
     [](AsyncWebServerRequest* request) {},
     nullptr,
