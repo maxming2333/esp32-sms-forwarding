@@ -96,6 +96,10 @@ void HttpServer::setup(AsyncWebServer& server) {
     [](AsyncWebServerRequest* request) {},
     nullptr,
     atBridgeCommandController);
+  server.on("/at/exchange", HTTP_POST,
+    [](AsyncWebServerRequest* request) {},
+    nullptr,
+    atBridgeExchangeController);
 
   // Config reset / reboot API
   server.on("/api/tools/reset-token", HTTP_GET, resetTokenController);

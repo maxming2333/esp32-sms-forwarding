@@ -24,6 +24,10 @@ void atBridgeSessionOpenController(AsyncWebServerRequest* request);
 void atBridgeCommandController(AsyncWebServerRequest* request, uint8_t* data,
                                size_t len, size_t index, size_t total);
 
+// POST /at/exchange —— 提示符类命令（AT+CMGS）：命令 → '>' → 载荷 → 终止状态
+void atBridgeExchangeController(AsyncWebServerRequest* request, uint8_t* data,
+                                size_t len, size_t index, size_t total);
+
 // DELETE /at/session —— 释放会话
 void atBridgeSessionCloseController(AsyncWebServerRequest* request, uint8_t* data,
                                    size_t len, size_t index, size_t total);
