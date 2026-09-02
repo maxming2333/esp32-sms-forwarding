@@ -387,13 +387,14 @@ void callEventsController(AsyncWebServerRequest* request) {
 
   AsyncJsonResponse* response = new AsyncJsonResponse();
   JsonObject root = response->getRoot().to<JsonObject>();
-  // latestSequence 与 dropped 一起让消费方判断是否漏读:只看 events 数组无法区分
-  // 「这段时间没人打来」和「打来了但缓冲已被覆盖」。
   // bootId 必须先于其余字段被消费方检查:sequence 在重启后归零,消费方记着旧游标
   // 就会永久读不到任何东西。见 CallEvents::bootId() 的消费方义务说明。
   root["bootId"]         = CallEvents::bootId();
+  // oldestSequence 让消费方精确推导丢失量:lost = max(0, oldest - (cursor + 1))。
+  // 桥不自己数「覆盖次数」—— 它不知道消费方读到哪了,那种计数在正常运行下会虚增:
+  // 环满后每次覆盖都累加,即便那条早已被读走。
   root["latestSequence"] = CallEvents::latestSequence();
-  root["dropped"]        = CallEvents::dropped();
+  root["oldestSequence"] = CallEvents::oldestSequence();
   root["uptimeMs"]       = (uint32_t)millis();
   JsonArray events = root["events"].to<JsonArray>();
   for (size_t index = 0; index < taken; index++) {
