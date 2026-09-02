@@ -23,8 +23,24 @@ static constexpr size_t BRIDGE_BODY_MAX_BYTES = 2048;
 static constexpr size_t BRIDGE_CMD_MAX_LEN = SIM_CMD_BUF_SIZE - 1;
 
 static constexpr unsigned long BRIDGE_TIMEOUT_MIN_MS     = 100;
-static constexpr unsigned long BRIDGE_TIMEOUT_MAX_MS     = 180000;
 static constexpr unsigned long BRIDGE_TIMEOUT_DEFAULT_MS = 5000;
+
+// 桥自己的阻塞上限，**故意小于契约允许的调用方超时**。
+//
+// 这两个 handler 运行在 async_tcp 单任务上下文，等待期间整个 HTTP 服务器停摆。
+// 对端的短信派发预算是 120s（Simplus agentapi.SMSDispatchTimeout），照它阻塞会让
+// 本设备近两分钟完全无响应——实测表现为该请求本身超时、且紧随其后的请求全部失败，
+// 一次回环测试 5 次里 4 次因此失败。
+//
+// 因此无论调用方要多久，桥只占用自己这么长时间，超出即回 504（结果不确定）。
+// 契约规定对端必须把 exchange 的 504 视为「已发出但结果未知」而不得重试，所以这个
+// 上限是安全的：它把不确定性显式化，而不是把设备拖死。
+// 30s 与固件原生短信路径（sms.cpp）一致，那条路径已长期验证。
+constexpr unsigned long BRIDGE_EXCHANGE_MAX_MS = 30000;
+
+// 普通命令的上限。Simplus 侧最长的短信命令是列举（10s），探测里最长的是 CFUN（12s），
+// APDU 透传 5s，20s 留有余量。
+constexpr unsigned long BRIDGE_COMMAND_MAX_MS = 20000;
 
 // 会话状态。HTTP 处理全部在 async_tcp 单任务上下文，因此不需要额外互斥。
 static char          s_session[17]     = {0};
@@ -105,8 +121,8 @@ void atBridgeCommandController(AsyncWebServerRequest* request, uint8_t* data,
   if (requestedTimeout > 0) {
     if (requestedTimeout < static_cast<long long>(BRIDGE_TIMEOUT_MIN_MS)) {
       timeoutMs = BRIDGE_TIMEOUT_MIN_MS;
-    } else if (requestedTimeout > static_cast<long long>(BRIDGE_TIMEOUT_MAX_MS)) {
-      timeoutMs = BRIDGE_TIMEOUT_MAX_MS;
+    } else if (requestedTimeout > static_cast<long long>(BRIDGE_COMMAND_MAX_MS)) {
+      timeoutMs = BRIDGE_COMMAND_MAX_MS;
     } else {
       timeoutMs = static_cast<unsigned long>(requestedTimeout);
     }
@@ -241,9 +257,9 @@ void atBridgeExchangeController(AsyncWebServerRequest* request, uint8_t* data,
 
   unsigned long timeoutMs = BRIDGE_TIMEOUT_DEFAULT_MS;
   if (requestedTimeout > 0) {
-    if (requestedTimeout < (long long)BRIDGE_TIMEOUT_MIN_MS)      timeoutMs = BRIDGE_TIMEOUT_MIN_MS;
-    else if (requestedTimeout > (long long)BRIDGE_TIMEOUT_MAX_MS) timeoutMs = BRIDGE_TIMEOUT_MAX_MS;
-    else                                                          timeoutMs = (unsigned long)requestedTimeout;
+    if (requestedTimeout < (long long)BRIDGE_TIMEOUT_MIN_MS)        timeoutMs = BRIDGE_TIMEOUT_MIN_MS;
+    else if (requestedTimeout > (long long)BRIDGE_EXCHANGE_MAX_MS) timeoutMs = BRIDGE_EXCHANGE_MAX_MS;
+    else                                                            timeoutMs = (unsigned long)requestedTimeout;
   }
 
   renewSession();
